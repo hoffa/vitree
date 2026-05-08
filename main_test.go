@@ -304,9 +304,10 @@ func TestSyncCurrentOnFile(t *testing.T) {
 			break
 		}
 	}
+	m.msg = "stale"
 	m.syncCurrent()
-	if !strings.HasPrefix(m.msg, "opened ") {
-		t.Fatalf("expected opened msg, got %q", m.msg)
+	if m.msg != "" {
+		t.Fatalf("expected msg cleared on success, got %q", m.msg)
 	}
 
 	m.vim = "/no/such/binary"
@@ -452,9 +453,10 @@ func TestUpdateEnterOnFile(t *testing.T) {
 			break
 		}
 	}
+	m.msg = "stale"
 	m = send(m, "enter")
-	if !strings.HasPrefix(m.msg, "opened ") {
-		t.Fatalf("expected opened msg, got %q", m.msg)
+	if m.msg != "" {
+		t.Fatalf("expected msg cleared, got %q", m.msg)
 	}
 }
 

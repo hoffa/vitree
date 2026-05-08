@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -153,7 +155,7 @@ func (m *model) syncCurrent() {
 	if err := openInVim(m.vim, m.server, cur.path); err != nil {
 		m.msg = "vim error: " + err.Error()
 	} else {
-		m.msg = "opened " + cur.path
+		m.msg = ""
 	}
 }
 
@@ -266,15 +268,12 @@ func (m model) View() string {
 		rendered++
 	}
 
-	footerLines := 1
-	if m.msg != "" {
-		footerLines = 2
-	}
-	gap := max(1, m.h-rendered-footerLines)
+	gap := max(1, m.h-rendered-1)
 	b.WriteString(strings.Repeat("\n", gap))
-	b.WriteString("↑/↓ move  ←/→ collapse/expand  ⏎ open  r refresh  q quit")
 	if m.msg != "" {
-		b.WriteString("\n" + m.msg)
+		b.WriteString(m.msg)
+	} else {
+		b.WriteString("↑/↓ move  ←/→ collapse/expand  ⏎ open  r refresh  q quit")
 	}
 	return b.String()
 }
@@ -304,8 +303,13 @@ func openInVim(vim, server, path string) error {
 	if server == "" {
 		return fmt.Errorf("no vim --servername set")
 	}
-	cmd := exec.Command(vim, "--servername", server, "--remote-silent", path)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, vim, "--servername", server, "--remote-silent", path)
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("vim server %q not responding", server)
+	}
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
