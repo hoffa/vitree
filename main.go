@@ -19,6 +19,10 @@ import (
 const (
 	ansiReset    = "\x1b[0m"
 	ansiSelected = "\x1b[7m"
+	ansiDir      = "\x1b[34m"
+	ansiDim      = "\x1b[2m"
+	ansiError    = "\x1b[31m"
+	ansiClearFg  = "\x1b[22;39m"
 )
 
 type node struct {
@@ -39,6 +43,7 @@ type model struct {
 	vim    string
 	server string
 	msg    string
+	help   bool
 	w, h   int
 }
 
@@ -126,7 +131,7 @@ func (m *model) refresh() {
 	m.root.children = nil
 	m.root.loaded = false
 	if err := m.root.load(); err != nil {
-		m.msg = err.Error()
+		m.msg = "error: " + err.Error()
 		return
 	}
 
@@ -153,7 +158,7 @@ func (m *model) syncCurrent() {
 		return
 	}
 	if err := openInVim(m.vim, m.server, cur.path); err != nil {
-		m.msg = "vim error: " + err.Error()
+		m.msg = "error: " + err.Error()
 	} else {
 		m.msg = ""
 	}
@@ -164,9 +169,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 	case tea.KeyMsg:
+		if m.help {
+			m.help = false
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "?":
+			m.help = true
 		case "r":
 			m.refresh()
 		case "up", "k":
@@ -201,7 +215,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			if err := cur.load(); err != nil {
-				m.msg = err.Error()
+				m.msg = "error: " + err.Error()
 			}
 			cur.expanded = true
 			m.rebuildFlat()
@@ -212,7 +226,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if cur.isDir {
 				if err := cur.load(); err != nil {
-					m.msg = err.Error()
+					m.msg = "error: " + err.Error()
 				}
 				cur.expanded = !cur.expanded
 				m.rebuildFlat()
@@ -225,10 +239,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.help {
+		return m.helpView()
+	}
 	var b strings.Builder
-	b.WriteString(m.root.path + "/  [" + m.server + "]\n")
-
-	maxRows := m.h - 4
+	maxRows := m.h - 1
 	if maxRows <= 0 {
 		maxRows = len(m.flat)
 	}
@@ -241,41 +256,78 @@ func (m model) View() string {
 		end = len(m.flat)
 	}
 
-	rendered := 1 // root path line
+	rendered := 0
 	for i := start; i < end; i++ {
 		n := m.flat[i]
 		indent := strings.Repeat("  ", n.depth-1)
 		var marker, suffix string
 		if n.isDir {
 			if n.expanded {
-				marker = "- "
+				marker = "▼ "
 			} else {
-				marker = "+ "
+				marker = "▶ "
 			}
 			suffix = "/"
 		} else {
 			marker = "  "
 		}
 		raw := indent + marker + n.name + suffix
+		var styled string
+		if n.isDir {
+			styled = indent + marker + ansiDir + n.name + suffix + ansiClearFg
+		} else {
+			styled = raw
+		}
 		var line string
 		if i == m.cursor {
 			pad := max(0, m.w-utf8.RuneCountInString(raw))
 			line = ansiSelected + raw + strings.Repeat(" ", pad) + ansiReset
 		} else {
-			line = raw
+			line = styled + ansiReset
 		}
 		b.WriteString(line + "\n")
 		rendered++
 	}
 
-	gap := max(1, m.h-rendered-1)
+	gap := max(0, m.h-rendered-1)
 	b.WriteString(strings.Repeat("\n", gap))
+
+	leftRaw := m.root.path + "/"
+	leftStyled := ansiDim + leftRaw + ansiReset
 	if m.msg != "" {
-		b.WriteString(m.msg)
+		leftRaw = m.msg
+		color := ansiDim
+		if strings.HasPrefix(m.msg, "error:") {
+			color = ansiError
+		}
+		leftStyled = color + m.msg + ansiReset
+	}
+	right := "? help"
+	rightStyled := ansiDim + right + ansiReset
+	pad := m.w - utf8.RuneCountInString(leftRaw) - utf8.RuneCountInString(right)
+	if pad < 1 {
+		b.WriteString(leftStyled)
 	} else {
-		b.WriteString("↑/↓ move  ←/→ collapse/expand  ⏎ open  r refresh  q quit")
+		b.WriteString(leftStyled + strings.Repeat(" ", pad) + rightStyled)
 	}
 	return b.String()
+}
+
+func (m model) helpView() string {
+	lines := []string{
+		"keys",
+		"  ↑/↓  j/k    move",
+		"  ←/→  h/l    collapse / expand",
+		"  ⏎            toggle dir / open file",
+		"  r             refresh",
+		"  ?             toggle this help",
+		"  q             quit",
+		"",
+		"vim server: " + m.server,
+		"",
+		ansiDim + "press any key to close" + ansiReset,
+	}
+	return strings.Join(lines, "\n")
 }
 
 func detectVimServer(vim string) (string, error) {

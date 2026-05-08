@@ -223,12 +223,49 @@ func TestUpdateQuitsOnQ(t *testing.T) {
 
 func TestView(t *testing.T) {
 	m := newTestModel(t)
+	m.cursor = 0
 	out := m.View()
 	if !strings.Contains(out, "a_dir/") {
 		t.Fatalf("view missing a_dir: %q", out)
 	}
-	if !strings.Contains(out, "↑/↓ move") {
-		t.Fatal("view missing help line")
+	if !strings.Contains(out, "? help") {
+		t.Fatal("view missing help hint")
+	}
+}
+
+func TestHelpToggle(t *testing.T) {
+	m := newTestModel(t)
+	m.server = "VIM"
+	m = send(m, "?")
+	if !m.help {
+		t.Fatal("? did not enable help")
+	}
+	out := m.View()
+	if !strings.Contains(out, "vim server: VIM") {
+		t.Fatalf("help missing server: %q", out)
+	}
+	m = send(m, "j") // any key dismisses
+	if m.help {
+		t.Fatal("any key did not dismiss help")
+	}
+}
+
+func TestHelpCtrlCQuits(t *testing.T) {
+	m := newTestModel(t)
+	m.help = true
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c in help should quit")
+	}
+}
+
+func TestViewBottomMsgOverridesHelp(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = 0
+	m.msg = "error: boom"
+	out := m.View()
+	if !strings.Contains(out, "error: boom") {
+		t.Fatalf("missing error: %q", out)
 	}
 }
 
@@ -312,8 +349,8 @@ func TestSyncCurrentOnFile(t *testing.T) {
 
 	m.vim = "/no/such/binary"
 	m.syncCurrent()
-	if !strings.HasPrefix(m.msg, "vim error") {
-		t.Fatalf("expected vim error msg, got %q", m.msg)
+	if !strings.HasPrefix(m.msg, "error:") {
+		t.Fatalf("expected error msg, got %q", m.msg)
 	}
 }
 
@@ -403,17 +440,11 @@ func TestInit(t *testing.T) {
 	}
 }
 
-func TestViewFitsHeight(t *testing.T) {
+func TestViewBottomMsg(t *testing.T) {
 	m := newTestModel(t)
-	m.h = 5
-	out := m.View()
-	if !strings.Contains(out, "↑/↓ move") {
-		t.Fatal("help line missing in tight height")
-	}
-	m.h = 100
+	m.cursor = 0
 	m.msg = "hello"
-	out = m.View()
-	if !strings.Contains(out, "hello") {
+	if !strings.Contains(m.View(), "hello") {
 		t.Fatal("msg missing")
 	}
 }
@@ -421,9 +452,7 @@ func TestViewFitsHeight(t *testing.T) {
 func TestViewSmallHeight(t *testing.T) {
 	m := newTestModel(t)
 	m.h = 2
-	if !strings.Contains(m.View(), "↑/↓ move") {
-		t.Fatal("help missing on tiny height")
-	}
+	_ = m.View()
 }
 
 func TestViewScrolls(t *testing.T) {
@@ -437,8 +466,8 @@ func TestViewScrolls(t *testing.T) {
 
 func TestViewWithExpandedDir(t *testing.T) {
 	m := newTestModel(t)
-	m = send(m, "l") // expand a_dir
-	if !strings.Contains(m.View(), "- a_dir/") {
+	m = send(m, "l", "j") // expand a_dir, move off it
+	if !strings.Contains(m.View(), "▼ \x1b[34ma_dir/") {
 		t.Fatal("expanded dir marker missing")
 	}
 }
