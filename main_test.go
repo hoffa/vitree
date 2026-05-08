@@ -195,11 +195,16 @@ func TestUpdateEnterTogglesDir(t *testing.T) {
 	}
 }
 
-func TestUpdateRefresh(t *testing.T) {
+func TestCollapseDropsCache(t *testing.T) {
 	m := newTestModel(t)
-	m = send(m, "l", "r")
-	if m.msg != "refreshed" {
-		t.Fatalf("msg=%q", m.msg)
+	m = send(m, "l") // expand a_dir, loads from disk
+	cur := m.current()
+	if !cur.loaded || len(cur.children) == 0 {
+		t.Fatal("expand should load children")
+	}
+	m = send(m, "h") // collapse
+	if cur.loaded || cur.children != nil {
+		t.Fatal("collapse should drop cache for re-read on next expand")
 	}
 }
 
@@ -360,23 +365,6 @@ func TestUpdateNoopsOnEmptyTree(t *testing.T) {
 	for _, k := range []string{"left", "right", "enter", "h", "l"} {
 		nm, _ := m.Update(key(k))
 		m = nm.(model)
-	}
-}
-
-func TestUpdateRefreshHandlesLoadError(t *testing.T) {
-	dir := t.TempDir()
-	r, _ := newNode(dir, 0, nil)
-	_ = r.load()
-	r.expanded = true
-	m := model{root: r, w: 80, h: 24}
-	m.rebuildFlat()
-	if err := os.Chmod(dir, 0); err != nil {
-		t.Skip(err)
-	}
-	defer os.Chmod(dir, 0o755)
-	m.refresh()
-	if m.msg == "refreshed" {
-		t.Fatal("expected error msg, got refreshed")
 	}
 }
 

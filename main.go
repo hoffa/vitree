@@ -120,31 +120,6 @@ func clamp(v, lo, hi int) int {
 
 func (m model) Init() tea.Cmd { return nil }
 
-func (m *model) refresh() {
-	expanded := map[string]bool{}
-	m.root.walk(func(n *node) {
-		if n.isDir && n.expanded {
-			expanded[n.path] = true
-		}
-	})
-
-	m.root.children = nil
-	m.root.loaded = false
-	if err := m.root.load(); err != nil {
-		m.msg = "error: " + err.Error()
-		return
-	}
-
-	m.root.walk(func(n *node) {
-		if n.isDir && expanded[n.path] {
-			_ = n.load()
-			n.expanded = true
-		}
-	})
-	m.rebuildFlat()
-	m.msg = "refreshed"
-}
-
 func (m *model) current() *node {
 	if m.cursor < 0 || m.cursor >= len(m.flat) {
 		return nil
@@ -181,8 +156,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "?":
 			m.help = true
-		case "r":
-			m.refresh()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -200,6 +173,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if cur.isDir && cur.expanded {
 				cur.expanded = false
+				cur.children = nil
+				cur.loaded = false
 				m.rebuildFlat()
 			} else if cur.parent != nil && cur.parent != m.root {
 				for i, n := range m.flat {
@@ -224,15 +199,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cur == nil {
 				break
 			}
-			if cur.isDir {
+			if !cur.isDir {
+				m.syncCurrent()
+				break
+			}
+			if cur.expanded {
+				cur.expanded = false
+				cur.children = nil
+				cur.loaded = false
+			} else {
 				if err := cur.load(); err != nil {
 					m.msg = "error: " + err.Error()
 				}
-				cur.expanded = !cur.expanded
-				m.rebuildFlat()
-			} else {
-				m.syncCurrent()
+				cur.expanded = true
 			}
+			m.rebuildFlat()
 		}
 	}
 	return m, nil
@@ -319,7 +300,6 @@ func (m model) helpView() string {
 		"  ↑/↓  j/k    move",
 		"  ←/→  h/l    collapse / expand",
 		"  ⏎            toggle dir / open file",
-		"  r             refresh",
 		"  ?             toggle this help",
 		"  q             quit",
 		"",
