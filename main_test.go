@@ -237,3 +237,90 @@ func TestVimServerRunningFailsForBadBinary(t *testing.T) {
 		t.Fatal("expected false for missing binary")
 	}
 }
+
+func writeFakeVim(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "vim")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestVimServerRunningMatchesCaseInsensitive(t *testing.T) {
+	vim := writeFakeVim(t, `echo "OTHER"; echo "foo"; echo "bar"`)
+	if !vimServerRunning(vim, "FOO") {
+		t.Fatal("expected match for case-insensitive 'foo'")
+	}
+	if vimServerRunning(vim, "missing") {
+		t.Fatal("expected no match")
+	}
+}
+
+func TestOpenInVimSuccess(t *testing.T) {
+	vim := writeFakeVim(t, `
+if [ "$1" = "--serverlist" ]; then echo "EDIT"; exit 0; fi
+exit 0
+`)
+	if err := openInVim(vim, "EDIT", "/tmp/x"); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+}
+
+func TestOpenInVimRemoteFails(t *testing.T) {
+	vim := writeFakeVim(t, `
+if [ "$1" = "--serverlist" ]; then echo "EDIT"; exit 0; fi
+echo "boom" >&2
+exit 2
+`)
+	if err := openInVim(vim, "EDIT", "/tmp/x"); err == nil {
+		t.Fatal("expected error from --remote-silent failure")
+	}
+}
+
+func TestOpenInVimNoServerRunning(t *testing.T) {
+	vim := writeFakeVim(t, `exit 0`)
+	if err := openInVim(vim, "EDIT", "/tmp/x"); err == nil {
+		t.Fatal("expected error when server not in --serverlist output")
+	}
+}
+
+func TestSyncCurrentOnDirIsNoop(t *testing.T) {
+	m := newTestModel(t)
+	m.msg = ""
+	m.syncCurrent() // cursor on a dir
+	if m.msg != "" {
+		t.Fatalf("expected no msg for dir, got %q", m.msg)
+	}
+}
+
+func TestInit(t *testing.T) {
+	m := newTestModel(t)
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("Init should return nil")
+	}
+}
+
+func TestViewFitsHeight(t *testing.T) {
+	m := newTestModel(t)
+	m.h = 5
+	out := m.View()
+	if !strings.Contains(out, "↑/↓ move") {
+		t.Fatal("help line missing in tight height")
+	}
+	m.h = 100
+	m.msg = "hello"
+	out = m.View()
+	if !strings.Contains(out, "hello") {
+		t.Fatal("msg missing")
+	}
+}
+
+func TestWindowSizeMsg(t *testing.T) {
+	m := newTestModel(t)
+	nm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if nm.(model).w != 120 || nm.(model).h != 40 {
+		t.Fatal("window size not applied")
+	}
+}
