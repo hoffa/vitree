@@ -369,6 +369,32 @@ func TestClamp(t *testing.T) {
 	}
 }
 
+func TestNewModel(t *testing.T) {
+	dir := mkTree(t)
+	vim := writeFakeVim(t, `echo "EDIT"`)
+
+	m, err := newModel(vim, "", dir)
+	if err != nil || m.server != "EDIT" {
+		t.Fatalf("auto-detect: server=%q err=%v", m.server, err)
+	}
+
+	m, err = newModel(vim, "OTHER", dir)
+	if err != nil || m.server != "OTHER" {
+		t.Fatalf("explicit: server=%q err=%v", m.server, err)
+	}
+
+	if _, err := newModel("/no/such", "", dir); err == nil {
+		t.Fatal("expected detect error")
+	}
+	if _, err := newModel(vim, "X", "/no/such/dir"); err == nil {
+		t.Fatal("expected node error")
+	}
+	file := filepath.Join(dir, "z_file.txt")
+	if _, err := newModel(vim, "X", file); err == nil {
+		t.Fatal("expected non-dir error")
+	}
+}
+
 func TestInit(t *testing.T) {
 	m := newTestModel(t)
 	if cmd := m.Init(); cmd != nil {
@@ -388,6 +414,113 @@ func TestViewFitsHeight(t *testing.T) {
 	out = m.View()
 	if !strings.Contains(out, "hello") {
 		t.Fatal("msg missing")
+	}
+}
+
+func TestViewSmallHeight(t *testing.T) {
+	m := newTestModel(t)
+	m.h = 2
+	if !strings.Contains(m.View(), "↑/↓ move") {
+		t.Fatal("help missing on tiny height")
+	}
+}
+
+func TestViewScrolls(t *testing.T) {
+	m := newTestModel(t)
+	m.h = 6
+	m.cursor = len(m.flat) - 1
+	if !strings.Contains(m.View(), m.flat[len(m.flat)-1].name) {
+		t.Fatal("cursor row not visible after scroll")
+	}
+}
+
+func TestViewWithExpandedDir(t *testing.T) {
+	m := newTestModel(t)
+	m = send(m, "l") // expand a_dir
+	if !strings.Contains(m.View(), "- a_dir/") {
+		t.Fatal("expanded dir marker missing")
+	}
+}
+
+func TestUpdateEnterOnFile(t *testing.T) {
+	m := newTestModel(t)
+	m.vim = writeFakeVim(t, `exit 0`)
+	m.server = "EDIT"
+	for i, n := range m.flat {
+		if !n.isDir {
+			m.cursor = i
+			break
+		}
+	}
+	m = send(m, "enter")
+	if !strings.HasPrefix(m.msg, "opened ") {
+		t.Fatalf("expected opened msg, got %q", m.msg)
+	}
+}
+
+func TestUpdateLoadErrorOnExpand(t *testing.T) {
+	root := mkTree(t)
+	r, _ := newNode(root, 0, nil)
+	_ = r.load()
+	r.expanded = true
+	m := model{root: r, w: 80, h: 24}
+	m.rebuildFlat()
+	// pick the first dir, chmod it to break load
+	for i, n := range m.flat {
+		if n.isDir {
+			m.cursor = i
+			if err := os.Chmod(n.path, 0); err != nil {
+				t.Skip(err)
+			}
+			defer func(p string) { _ = os.Chmod(p, 0o755) }(n.path)
+			break
+		}
+	}
+	m = send(m, "l")
+	if m.msg == "" {
+		t.Fatal("expected error msg from failed load")
+	}
+}
+
+func TestRun(t *testing.T) {
+	dir := mkTree(t)
+	cwd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(cwd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	vim := writeFakeVim(t, `echo "EDIT"`)
+
+	prev := runProgram
+	defer func() { runProgram = prev }()
+	called := false
+	runProgram = func(m tea.Model) error { called = true; return nil }
+
+	if err := run([]string{"-vim", vim}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !called {
+		t.Fatal("runProgram not invoked")
+	}
+
+	if err := run([]string{"-vim", "/no/such"}); err == nil {
+		t.Fatal("expected error for missing vim")
+	}
+
+	if err := run([]string{"-bogus"}); err == nil {
+		t.Fatal("expected flag parse error")
+	}
+}
+
+func TestNewModelLoadError(t *testing.T) {
+	dir := t.TempDir()
+	vim := writeFakeVim(t, `echo "EDIT"`)
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Skip(err)
+	}
+	defer func() { _ = os.Chmod(dir, 0o755) }()
+	if _, err := newModel(vim, "X", dir); err == nil {
+		t.Fatal("expected load error")
 	}
 }
 

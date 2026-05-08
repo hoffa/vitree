@@ -2,7 +2,7 @@
 
 [![check](https://github.com/hoffa/vitree/actions/workflows/check.yml/badge.svg)](https://github.com/hoffa/vitree/actions/workflows/check.yml)
 
-Interactive file tree that opens files in a running vim session via `--servername` / `--remote-silent`.
+Interactive file tree that opens files in a running vim session.
 
 ## Install
 
@@ -12,17 +12,12 @@ go install github.com/hoffa/vitree@latest
 
 ## Usage
 
-Start vim with a server name, then run vitree from the directory you want to browse:
-
-```sh
-vim --servername VIM    # in one terminal
-vitree                  # in another, in the project root
-```
+Start vim with `--servername`, then run `vitree` from the project root in another terminal. The selected file syncs to vim as you move.
 
 Flags:
 
-- `-server NAME` — vim servername to target (default `VIM`)
-- `-vim PATH` — vim binary to invoke (default `vim`; use `mvim`/`gvim` if your `vim` lacks `+clientserver`)
+- `-server NAME` — pick a specific vim server (auto-detected if there's only one running)
+- `-vim PATH` — vim binary to invoke (default `vim`)
 
 ## Keys
 
@@ -36,4 +31,4 @@ Flags:
 
 ## Requirements
 
-A vim built with `+clientserver`. On macOS the system `vim` usually isn't — install MacVim (`brew install macvim`) and use `mvim --servername VIM` plus `vitree -vim mvim`.
+A vim built with `+clientserver`. On macOS the system `vim` doesn't have it — `brew install vim`.

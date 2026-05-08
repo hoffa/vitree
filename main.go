@@ -312,39 +312,55 @@ func openInVim(vim, server, path string) error {
 	return nil
 }
 
-func main() {
-	server := flag.String("server", "", "vim --servername to send files to (auto-detected if empty)")
-	vim := flag.String("vim", "vim", "vim binary to invoke (e.g. mvim, gvim, /path/to/vim)")
-	flag.Parse()
-
-	if *server == "" {
-		detected, err := detectVimServer(*vim)
+func newModel(vim, server, path string) (model, error) {
+	if server == "" {
+		detected, err := detectVimServer(vim)
 		if err != nil {
-			log.Fatal(err)
+			return model{}, err
 		}
-		*server = detected
+		server = detected
 	}
-
-	abs, err := filepath.Abs(".")
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		log.Fatal(err)
+		return model{}, err
 	}
 	root, err := newNode(abs, 0, nil)
 	if err != nil {
-		log.Fatal(err)
+		return model{}, err
 	}
 	if !root.isDir {
-		log.Fatal("root must be a directory")
+		return model{}, fmt.Errorf("root must be a directory")
 	}
 	if err := root.load(); err != nil {
-		log.Fatal(err)
+		return model{}, err
 	}
 	root.expanded = true
-
-	m := model{root: root, server: *server, vim: *vim}
+	m := model{root: root, server: server, vim: vim}
 	m.rebuildFlat()
+	return m, nil
+}
 
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+var runProgram = func(m tea.Model) error {
+	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	return err
+}
+
+func run(args []string) error {
+	fs := flag.NewFlagSet("vitree", flag.ContinueOnError)
+	server := fs.String("server", "", "vim --servername to send files to (auto-detected if empty)")
+	vim := fs.String("vim", "vim", "vim binary to invoke (e.g. mvim, gvim, /path/to/vim)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	m, err := newModel(*vim, *server, ".")
+	if err != nil {
+		return err
+	}
+	return runProgram(m)
+}
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
 		log.Fatal(err)
 	}
 }
