@@ -309,25 +309,9 @@ func detectVimServer(vim string) (string, error) {
 	}
 }
 
-func vimServerRunning(vim, server string) bool {
-	servers, err := vimServers(vim)
-	if err != nil {
-		return false
-	}
-	for _, s := range servers {
-		if strings.EqualFold(s, server) {
-			return true
-		}
-	}
-	return false
-}
-
 func openInVim(vim, server, path string) error {
 	if server == "" {
-		return fmt.Errorf("no vim --servername set (export VIM_SERVERNAME or pass -server)")
-	}
-	if !vimServerRunning(vim, server) {
-		return fmt.Errorf("no running %s server %q", vim, server)
+		return fmt.Errorf("no vim --servername set")
 	}
 	cmd := exec.Command(vim, "--servername", server, "--remote-silent", path)
 	out, err := cmd.CombinedOutput()

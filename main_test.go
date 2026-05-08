@@ -232,12 +232,6 @@ func TestView(t *testing.T) {
 	}
 }
 
-func TestVimServerRunningFailsForBadBinary(t *testing.T) {
-	if vimServerRunning("/no/such/binary", "FOO") {
-		t.Fatal("expected false for missing binary")
-	}
-}
-
 func writeFakeVim(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -270,16 +264,6 @@ func TestDetectVimServer(t *testing.T) {
 	}
 }
 
-func TestVimServerRunningMatchesCaseInsensitive(t *testing.T) {
-	vim := writeFakeVim(t, `echo "OTHER"; echo "foo"; echo "bar"`)
-	if !vimServerRunning(vim, "FOO") {
-		t.Fatal("expected match for case-insensitive 'foo'")
-	}
-	if vimServerRunning(vim, "missing") {
-		t.Fatal("expected no match")
-	}
-}
-
 func TestOpenInVimSuccess(t *testing.T) {
 	vim := writeFakeVim(t, `
 if [ "$1" = "--serverlist" ]; then echo "EDIT"; exit 0; fi
@@ -301,19 +285,34 @@ exit 2
 	}
 }
 
-func TestOpenInVimNoServerRunning(t *testing.T) {
-	vim := writeFakeVim(t, `exit 0`)
-	if err := openInVim(vim, "EDIT", "/tmp/x"); err == nil {
-		t.Fatal("expected error when server not in --serverlist output")
-	}
-}
-
 func TestSyncCurrentOnDirIsNoop(t *testing.T) {
 	m := newTestModel(t)
 	m.msg = ""
 	m.syncCurrent() // cursor on a dir
 	if m.msg != "" {
 		t.Fatalf("expected no msg for dir, got %q", m.msg)
+	}
+}
+
+func TestSyncCurrentOnFile(t *testing.T) {
+	m := newTestModel(t)
+	m.vim = writeFakeVim(t, `exit 0`)
+	m.server = "EDIT"
+	for i, n := range m.flat {
+		if !n.isDir {
+			m.cursor = i
+			break
+		}
+	}
+	m.syncCurrent()
+	if !strings.HasPrefix(m.msg, "opened ") {
+		t.Fatalf("expected opened msg, got %q", m.msg)
+	}
+
+	m.vim = "/no/such/binary"
+	m.syncCurrent()
+	if !strings.HasPrefix(m.msg, "vim error") {
+		t.Fatalf("expected vim error msg, got %q", m.msg)
 	}
 }
 
