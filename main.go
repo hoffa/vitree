@@ -308,7 +308,7 @@ func openInVim(vim, server, path string) error {
 }
 
 func main() {
-	server := flag.String("server", os.Getenv("VIM_SERVERNAME"), "vim --servername to send files to (default $VIM_SERVERNAME)")
+	server := flag.String("server", "VIM", "vim --servername to send files to")
 	vim := flag.String("vim", "vim", "vim binary to invoke (e.g. mvim, gvim, /path/to/vim)")
 	flag.Parse()
 
