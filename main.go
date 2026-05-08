@@ -54,6 +54,13 @@ func newNode(path string, depth int, parent *node) (*node, error) {
 	}, nil
 }
 
+func (n *node) walk(fn func(*node)) {
+	fn(n)
+	for _, c := range n.children {
+		c.walk(fn)
+	}
+}
+
 func (n *node) load() error {
 	if !n.isDir || n.loaded {
 		return nil
@@ -97,22 +104,50 @@ func (m *model) rebuildFlat() {
 	for _, c := range m.root.children {
 		walk(c)
 	}
-	if m.cursor >= len(m.flat) {
-		m.cursor = len(m.flat) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
+	m.cursor = clamp(m.cursor, 0, len(m.flat)-1)
+}
+
+func clamp(v, lo, hi int) int {
+	return max(lo, min(hi, v))
 }
 
 func (m model) Init() tea.Cmd { return nil }
 
-func (m *model) syncCurrent() {
-	if m.cursor >= len(m.flat) {
+func (m *model) refresh() {
+	expanded := map[string]bool{}
+	m.root.walk(func(n *node) {
+		if n.isDir && n.expanded {
+			expanded[n.path] = true
+		}
+	})
+
+	m.root.children = nil
+	m.root.loaded = false
+	if err := m.root.load(); err != nil {
+		m.msg = err.Error()
 		return
 	}
-	cur := m.flat[m.cursor]
-	if cur.isDir {
+
+	m.root.walk(func(n *node) {
+		if n.isDir && expanded[n.path] {
+			_ = n.load()
+			n.expanded = true
+		}
+	})
+	m.rebuildFlat()
+	m.msg = "refreshed"
+}
+
+func (m *model) current() *node {
+	if m.cursor < 0 || m.cursor >= len(m.flat) {
+		return nil
+	}
+	return m.flat[m.cursor]
+}
+
+func (m *model) syncCurrent() {
+	cur := m.current()
+	if cur == nil || cur.isDir {
 		return
 	}
 	if err := openInVim(m.vim, m.server, cur.path); err != nil {
@@ -131,37 +166,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "r":
-			expanded := map[string]bool{}
-			var walk func(n *node)
-			walk = func(n *node) {
-				if n.isDir && n.expanded {
-					expanded[n.path] = true
-				}
-				for _, c := range n.children {
-					walk(c)
-				}
-			}
-			walk(m.root)
-			m.root.children = nil
-			m.root.loaded = false
-			if err := m.root.load(); err != nil {
-				m.msg = err.Error()
-			}
-			var rewalk func(n *node)
-			rewalk = func(n *node) {
-				if n.isDir && expanded[n.path] {
-					_ = n.load()
-					n.expanded = true
-					for _, c := range n.children {
-						rewalk(c)
-					}
-				}
-			}
-			for _, c := range m.root.children {
-				rewalk(c)
-			}
-			m.rebuildFlat()
-			m.msg = "refreshed"
+			m.refresh()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -173,43 +178,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncCurrent()
 			}
 		case "left", "h":
-			if m.cursor < len(m.flat) {
-				cur := m.flat[m.cursor]
-				if cur.isDir && cur.expanded {
-					cur.expanded = false
-					m.rebuildFlat()
-				} else if cur.parent != nil && cur.parent != m.root {
-					for i, n := range m.flat {
-						if n == cur.parent {
-							m.cursor = i
-							break
-						}
+			cur := m.current()
+			if cur == nil {
+				break
+			}
+			if cur.isDir && cur.expanded {
+				cur.expanded = false
+				m.rebuildFlat()
+			} else if cur.parent != nil && cur.parent != m.root {
+				for i, n := range m.flat {
+					if n == cur.parent {
+						m.cursor = i
+						break
 					}
 				}
 			}
 		case "right", "l":
-			if m.cursor < len(m.flat) {
-				cur := m.flat[m.cursor]
-				if cur.isDir {
-					if err := cur.load(); err != nil {
-						m.msg = err.Error()
-					}
-					cur.expanded = true
-					m.rebuildFlat()
-				}
+			cur := m.current()
+			if cur == nil || !cur.isDir {
+				break
 			}
+			if err := cur.load(); err != nil {
+				m.msg = err.Error()
+			}
+			cur.expanded = true
+			m.rebuildFlat()
 		case "enter":
-			if m.cursor < len(m.flat) {
-				cur := m.flat[m.cursor]
-				if cur.isDir {
-					if err := cur.load(); err != nil {
-						m.msg = err.Error()
-					}
-					cur.expanded = !cur.expanded
-					m.rebuildFlat()
-				} else {
-					m.syncCurrent()
+			cur := m.current()
+			if cur == nil {
+				break
+			}
+			if cur.isDir {
+				if err := cur.load(); err != nil {
+					m.msg = err.Error()
 				}
+				cur.expanded = !cur.expanded
+				m.rebuildFlat()
+			} else {
+				m.syncCurrent()
 			}
 		}
 	}
@@ -218,7 +224,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(m.root.path + "/\n")
+	b.WriteString(m.root.path + "/  [" + m.server + "]\n")
 
 	maxRows := m.h - 4
 	if maxRows <= 0 {
@@ -251,10 +257,7 @@ func (m model) View() string {
 		raw := indent + marker + n.name + suffix
 		var line string
 		if i == m.cursor {
-			pad := m.w - utf8.RuneCountInString(raw)
-			if pad < 0 {
-				pad = 0
-			}
+			pad := max(0, m.w-utf8.RuneCountInString(raw))
 			line = ansiSelected + raw + strings.Repeat(" ", pad) + ansiReset
 		} else {
 			line = raw
@@ -267,10 +270,7 @@ func (m model) View() string {
 	if m.msg != "" {
 		footerLines = 2
 	}
-	gap := m.h - rendered - footerLines
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(1, m.h-rendered-footerLines)
 	b.WriteString(strings.Repeat("\n", gap))
 	b.WriteString("↑/↓ move  ←/→ collapse/expand  ⏎ open  r refresh  q quit")
 	if m.msg != "" {
@@ -279,25 +279,16 @@ func (m model) View() string {
 	return b.String()
 }
 
-func vimServers(vim string) ([]string, error) {
+func detectVimServer(vim string) (string, error) {
 	out, err := exec.Command(vim, "--serverlist").Output()
 	if err != nil {
-		return nil, fmt.Errorf("could not run %s --serverlist: %w", vim, err)
+		return "", fmt.Errorf("could not run %s --serverlist: %w", vim, err)
 	}
 	var servers []string
 	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
+		if line = strings.TrimSpace(line); line != "" {
 			servers = append(servers, line)
 		}
-	}
-	return servers, nil
-}
-
-func detectVimServer(vim string) (string, error) {
-	servers, err := vimServers(vim)
-	if err != nil {
-		return "", err
 	}
 	switch len(servers) {
 	case 0:

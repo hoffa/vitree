@@ -316,6 +316,59 @@ func TestSyncCurrentOnFile(t *testing.T) {
 	}
 }
 
+func TestUpdateNoopsOnEmptyTree(t *testing.T) {
+	m := newTestModel(t)
+	m.flat = nil
+	for _, k := range []string{"left", "right", "enter", "h", "l"} {
+		nm, _ := m.Update(key(k))
+		m = nm.(model)
+	}
+}
+
+func TestUpdateRefreshHandlesLoadError(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := newNode(dir, 0, nil)
+	_ = r.load()
+	r.expanded = true
+	m := model{root: r, w: 80, h: 24}
+	m.rebuildFlat()
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Skip(err)
+	}
+	defer os.Chmod(dir, 0o755)
+	m.refresh()
+	if m.msg == "refreshed" {
+		t.Fatal("expected error msg, got refreshed")
+	}
+}
+
+func TestCurrentOutOfRange(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = -1
+	if m.current() != nil {
+		t.Fatal("expected nil for negative cursor")
+	}
+	m.cursor = 999
+	if m.current() != nil {
+		t.Fatal("expected nil for over-range cursor")
+	}
+}
+
+func TestNodeWalk(t *testing.T) {
+	m := newTestModel(t)
+	count := 0
+	m.root.walk(func(n *node) { count++ })
+	if count < 5 {
+		t.Fatalf("expected to walk at least root + children, got %d", count)
+	}
+}
+
+func TestClamp(t *testing.T) {
+	if clamp(5, 0, 10) != 5 || clamp(-1, 0, 10) != 0 || clamp(99, 0, 10) != 10 {
+		t.Fatal("clamp broken")
+	}
+}
+
 func TestInit(t *testing.T) {
 	m := newTestModel(t)
 	if cmd := m.Init(); cmd != nil {
