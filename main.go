@@ -279,13 +279,43 @@ func (m model) View() string {
 	return b.String()
 }
 
-func vimServerRunning(vim, server string) bool {
+func vimServers(vim string) ([]string, error) {
 	out, err := exec.Command(vim, "--serverlist").Output()
+	if err != nil {
+		return nil, fmt.Errorf("could not run %s --serverlist: %w", vim, err)
+	}
+	var servers []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			servers = append(servers, line)
+		}
+	}
+	return servers, nil
+}
+
+func detectVimServer(vim string) (string, error) {
+	servers, err := vimServers(vim)
+	if err != nil {
+		return "", err
+	}
+	switch len(servers) {
+	case 0:
+		return "", fmt.Errorf("no vim server running — start vim with --servername first")
+	case 1:
+		return servers[0], nil
+	default:
+		return "", fmt.Errorf("multiple vim servers running (%s); pick one with -server", strings.Join(servers, ", "))
+	}
+}
+
+func vimServerRunning(vim, server string) bool {
+	servers, err := vimServers(vim)
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.EqualFold(strings.TrimSpace(line), server) {
+	for _, s := range servers {
+		if strings.EqualFold(s, server) {
 			return true
 		}
 	}
@@ -308,9 +338,17 @@ func openInVim(vim, server, path string) error {
 }
 
 func main() {
-	server := flag.String("server", "VIM", "vim --servername to send files to")
+	server := flag.String("server", "", "vim --servername to send files to (auto-detected if empty)")
 	vim := flag.String("vim", "vim", "vim binary to invoke (e.g. mvim, gvim, /path/to/vim)")
 	flag.Parse()
+
+	if *server == "" {
+		detected, err := detectVimServer(*vim)
+		if err != nil {
+			log.Fatal(err)
+		}
+		*server = detected
+	}
 
 	abs, err := filepath.Abs(".")
 	if err != nil {

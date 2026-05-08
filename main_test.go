@@ -248,6 +248,28 @@ func writeFakeVim(t *testing.T, body string) string {
 	return p
 }
 
+func TestDetectVimServer(t *testing.T) {
+	one := writeFakeVim(t, `echo "EDIT"`)
+	got, err := detectVimServer(one)
+	if err != nil || got != "EDIT" {
+		t.Fatalf("single: got=%q err=%v", got, err)
+	}
+
+	none := writeFakeVim(t, `echo ""`)
+	if _, err := detectVimServer(none); err == nil {
+		t.Fatal("expected error for no servers")
+	}
+
+	many := writeFakeVim(t, `echo "EDIT"; echo "OTHER"`)
+	if _, err := detectVimServer(many); err == nil {
+		t.Fatal("expected error for multiple servers")
+	}
+
+	if _, err := detectVimServer("/no/such/binary"); err == nil {
+		t.Fatal("expected error for missing binary")
+	}
+}
+
 func TestVimServerRunningMatchesCaseInsensitive(t *testing.T) {
 	vim := writeFakeVim(t, `echo "OTHER"; echo "foo"; echo "bar"`)
 	if !vimServerRunning(vim, "FOO") {
