@@ -295,41 +295,19 @@ func (m model) View() string {
 }
 
 func (m model) helpView() string {
-	keys := [][2]string{
-		{"↑/↓  j/k", "move"},
-		{"←/→  h/l", "collapse / expand"},
-		{"⏎", "toggle dir / open file"},
-		{"?", "toggle this help"},
-		{"q", "quit"},
-	}
-	keyW := 0
-	for _, k := range keys {
-		if w := utf8.RuneCountInString(k[0]); w > keyW {
-			keyW = w
-		}
-	}
+	body := fmt.Sprintf(`keys
+  ↑/↓  j/k   `+ansiDim+`move`+ansiReset+`
+  ←/→  h/l   `+ansiDim+`collapse / expand`+ansiReset+`
+  ⏎          `+ansiDim+`toggle dir / open file`+ansiReset+`
+  ?          `+ansiDim+`toggle this help`+ansiReset+`
+  q          `+ansiDim+`quit`+ansiReset+`
 
-	var b strings.Builder
-	rendered := 0
-	write := func(s string) {
-		b.WriteString(s + "\n")
-		rendered++
-	}
-	write(ansiDim + "keys" + ansiReset)
-	for _, k := range keys {
-		pad := strings.Repeat(" ", keyW-utf8.RuneCountInString(k[0]))
-		write("  " + k[0] + pad + "   " + ansiDim + k[1] + ansiReset)
-	}
-	write("")
-	write(ansiDim + "vim server" + ansiReset)
-	write("  " + m.server)
-
-	gap := max(0, m.h-rendered-1)
-	b.WriteString(strings.Repeat("\n", gap))
+vim server
+  %s`, m.server)
 	hint := "press any key to close"
+	gap := max(0, m.h-strings.Count(body, "\n")-2)
 	pad := max(0, m.w-utf8.RuneCountInString(hint))
-	b.WriteString(strings.Repeat(" ", pad) + ansiDim + hint + ansiReset)
-	return b.String()
+	return body + "\n" + strings.Repeat("\n", gap) + strings.Repeat(" ", pad) + ansiDim + hint + ansiReset
 }
 
 func detectVimServer(vim string) (string, error) {
