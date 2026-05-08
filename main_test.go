@@ -3,7 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func mkTree(t *testing.T) string {
@@ -104,5 +107,133 @@ func TestRebuildFlatRespectsExpansion(t *testing.T) {
 func TestOpenInVimNoServer(t *testing.T) {
 	if err := openInVim("vim", "", "/tmp/x"); err == nil {
 		t.Fatal("expected error for empty server")
+	}
+}
+
+func newTestModel(t *testing.T) model {
+	t.Helper()
+	root := mkTree(t)
+	r, err := newNode(root, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.load(); err != nil {
+		t.Fatal(err)
+	}
+	r.expanded = true
+	m := model{root: r, w: 80, h: 24}
+	m.rebuildFlat()
+	return m
+}
+
+func key(s string) tea.KeyMsg {
+	if len(s) == 1 {
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	}
+	switch s {
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	}
+	return tea.KeyMsg{}
+}
+
+func send(m model, keys ...string) model {
+	for _, k := range keys {
+		nm, _ := m.Update(key(k))
+		m = nm.(model)
+	}
+	return m
+}
+
+func TestUpdateNavigation(t *testing.T) {
+	m := newTestModel(t)
+	if m.cursor != 0 {
+		t.Fatalf("initial cursor=%d", m.cursor)
+	}
+	m = send(m, "j", "j")
+	if m.cursor != 2 {
+		t.Fatalf("after jj cursor=%d", m.cursor)
+	}
+	m = send(m, "k")
+	if m.cursor != 1 {
+		t.Fatalf("after k cursor=%d", m.cursor)
+	}
+}
+
+func TestUpdateExpandCollapse(t *testing.T) {
+	m := newTestModel(t)
+	// cursor on "a_dir"
+	before := len(m.flat)
+	m = send(m, "l")
+	if len(m.flat) <= before {
+		t.Fatalf("expand did not add children: before=%d after=%d", before, len(m.flat))
+	}
+	m = send(m, "h")
+	if len(m.flat) != before {
+		t.Fatalf("collapse did not restore: got=%d want=%d", len(m.flat), before)
+	}
+}
+
+func TestUpdateEnterTogglesDir(t *testing.T) {
+	m := newTestModel(t)
+	before := len(m.flat)
+	m = send(m, "enter")
+	if len(m.flat) <= before {
+		t.Fatal("enter did not expand dir")
+	}
+	m = send(m, "enter")
+	if len(m.flat) != before {
+		t.Fatal("enter did not collapse dir")
+	}
+}
+
+func TestUpdateRefresh(t *testing.T) {
+	m := newTestModel(t)
+	m = send(m, "l", "r")
+	if m.msg != "refreshed" {
+		t.Fatalf("msg=%q", m.msg)
+	}
+}
+
+func TestUpdateLeftJumpsToParent(t *testing.T) {
+	m := newTestModel(t)
+	m = send(m, "l", "j") // expand a_dir, move into child
+	parentBefore := m.cursor
+	m = send(m, "h") // should jump to parent
+	if m.cursor >= parentBefore {
+		t.Fatalf("left did not move to parent: cursor=%d", m.cursor)
+	}
+}
+
+func TestUpdateQuitsOnQ(t *testing.T) {
+	m := newTestModel(t)
+	_, cmd := m.Update(key("q"))
+	if cmd == nil {
+		t.Fatal("q should return tea.Quit cmd")
+	}
+}
+
+func TestView(t *testing.T) {
+	m := newTestModel(t)
+	out := m.View()
+	if !strings.Contains(out, "a_dir/") {
+		t.Fatalf("view missing a_dir: %q", out)
+	}
+	if !strings.Contains(out, "↑/↓ move") {
+		t.Fatal("view missing help line")
+	}
+}
+
+func TestVimServerRunningFailsForBadBinary(t *testing.T) {
+	if vimServerRunning("/no/such/binary", "FOO") {
+		t.Fatal("expected false for missing binary")
 	}
 }

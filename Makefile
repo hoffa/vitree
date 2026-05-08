@@ -1,12 +1,14 @@
-.PHONY: check fix build
+.PHONY: check fix build test
 
 build:
 	go build -o vitree .
 
-check:
+check: test
 	test -z "$$(gofmt -l .)"
 	go vet .
-	go test .
+
+test:
+	./test.sh
 
 fix:
 	gofmt -w .
