@@ -246,7 +246,7 @@ func TestHelpToggle(t *testing.T) {
 		t.Fatal("? did not enable help")
 	}
 	out := m.View()
-	if !strings.Contains(out, "vim server: VIM") {
+	if !strings.Contains(out, "VIM") {
 		t.Fatalf("help missing server: %q", out)
 	}
 	m = send(m, "j") // any key dismisses

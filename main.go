@@ -295,19 +295,41 @@ func (m model) View() string {
 }
 
 func (m model) helpView() string {
-	lines := []string{
-		"keys",
-		"  ↑/↓  j/k    move",
-		"  ←/→  h/l    collapse / expand",
-		"  ⏎            toggle dir / open file",
-		"  ?             toggle this help",
-		"  q             quit",
-		"",
-		"vim server: " + m.server,
-		"",
-		ansiDim + "press any key to close" + ansiReset,
+	keys := [][2]string{
+		{"↑/↓  j/k", "move"},
+		{"←/→  h/l", "collapse / expand"},
+		{"⏎", "toggle dir / open file"},
+		{"?", "toggle this help"},
+		{"q", "quit"},
 	}
-	return strings.Join(lines, "\n")
+	keyW := 0
+	for _, k := range keys {
+		if w := utf8.RuneCountInString(k[0]); w > keyW {
+			keyW = w
+		}
+	}
+
+	var b strings.Builder
+	rendered := 0
+	write := func(s string) {
+		b.WriteString(s + "\n")
+		rendered++
+	}
+	write(ansiDim + "keys" + ansiReset)
+	for _, k := range keys {
+		pad := strings.Repeat(" ", keyW-utf8.RuneCountInString(k[0]))
+		write("  " + k[0] + pad + "   " + ansiDim + k[1] + ansiReset)
+	}
+	write("")
+	write(ansiDim + "vim server" + ansiReset)
+	write("  " + m.server)
+
+	gap := max(0, m.h-rendered-1)
+	b.WriteString(strings.Repeat("\n", gap))
+	hint := "press any key to close"
+	pad := max(0, m.w-utf8.RuneCountInString(hint))
+	b.WriteString(strings.Repeat(" ", pad) + ansiDim + hint + ansiReset)
+	return b.String()
 }
 
 func detectVimServer(vim string) (string, error) {
