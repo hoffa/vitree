@@ -4,6 +4,8 @@
 
 Interactive file tree that opens files in a running vim session.
 
+<img width="1012" height="711" alt="스크린샷 2026-05-10 01 16 09" src="https://github.com/user-attachments/assets/23e92baa-c4a2-46f7-b010-492cbc70fdda" />
+
 ## Install
 
 ```sh
