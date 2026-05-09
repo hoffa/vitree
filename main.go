@@ -177,6 +177,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 				return m, m.syncCurrent()
 			}
+		case "g":
+			m.cursor = 0
+			return m, m.syncCurrent()
+		case "G":
+			m.cursor = max(0, len(m.flat)-1)
+			return m, m.syncCurrent()
 		case "left", "h":
 			cur := m.current()
 			if cur == nil {
@@ -490,6 +496,7 @@ func (m model) helpView() string {
 	body := `keys
   ↑/↓  j/k   move
   ←/→  h/l   collapse / expand
+  g / G      jump to top / bottom
   ⏎          toggle dir / open file
   r          refresh tree from disk
   ?          toggle this help

@@ -198,6 +198,20 @@ func TestUpdateNavigation(t *testing.T) {
 	}
 }
 
+func TestUpdateJumpTopBottom(t *testing.T) {
+	m := newTestModel(t)
+
+	m = send(m, "G")
+	if m.cursor != len(m.flat)-1 {
+		t.Fatalf("G cursor=%d want=%d", m.cursor, len(m.flat)-1)
+	}
+
+	m = send(m, "g")
+	if m.cursor != 0 {
+		t.Fatalf("g cursor=%d want=0", m.cursor)
+	}
+}
+
 func TestUpdateExpandCollapse(t *testing.T) {
 	m := newTestModel(t)
 	// cursor on "a_dir"
