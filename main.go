@@ -21,10 +21,8 @@ import (
 const (
 	ansiReset    = "\x1b[0m"
 	ansiSelected = "\x1b[7m"
-	ansiDir      = "\x1b[34m"
 	ansiDim      = "\x1b[2m"
 	ansiError    = "\x1b[31m"
-	ansiClearFg  = "\x1b[22;39m"
 )
 
 type node struct {
@@ -264,20 +262,10 @@ func (m model) View() string {
 
 		raw := indent + marker + n.name + suffix
 
-		var styled string
-		if n.isDir {
-			styled = indent + marker + ansiDir + n.name + suffix + ansiClearFg
-		} else {
-			styled = raw
-		}
-
-		var line string
-
+		line := raw
 		if i == m.cursor {
 			pad := max(0, m.w-utf8.RuneCountInString(raw))
 			line = ansiSelected + raw + strings.Repeat(" ", pad) + ansiReset
-		} else {
-			line = styled + ansiReset
 		}
 
 		b.WriteString(line + "\n")
