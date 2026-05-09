@@ -26,6 +26,7 @@ const (
 	ansiRed      = "\x1b[31m"
 	ansiGreen    = "\x1b[32m"
 	ansiYellow   = "\x1b[33m"
+	ansiBlue     = "\x1b[34m"
 )
 
 func gitColor(mark string) string {
@@ -56,6 +57,7 @@ type model struct {
 	root        *node
 	flat        []*node
 	cursor      int
+	scroll      int
 	vim         string
 	server      string
 	msg         string
@@ -168,18 +170,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				m.ensureVisible()
+
 				return m, m.syncCurrent()
 			}
 		case "down", "j":
 			if m.cursor < len(m.flat)-1 {
 				m.cursor++
+				m.ensureVisible()
+
 				return m, m.syncCurrent()
 			}
 		case "g":
 			m.cursor = 0
+			m.ensureVisible()
+
 			return m, m.syncCurrent()
 		case "G":
 			m.cursor = max(0, len(m.flat)-1)
+			m.ensureVisible()
+
 			return m, m.syncCurrent()
 		case "left", "h":
 			cur := m.current()
@@ -200,6 +210,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
+				m.ensureVisible()
 				m.pendingPath = ""
 			}
 		case "right", "l":
@@ -249,17 +260,8 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	maxRows := m.h - 1
-	if maxRows <= 0 {
-		maxRows = len(m.flat)
-	}
-
-	start := 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
-	}
-
-	end := min(start+maxRows, len(m.flat))
+	start := m.scroll
+	end := min(start+m.maxRows(), len(m.flat))
 
 	rendered := 0
 
@@ -288,13 +290,24 @@ func (m model) View() string {
 			raw += " " + gitMark
 		}
 
-		line := raw
+		var line string
+
 		if i == m.cursor {
 			pad := max(0, m.w-utf8.RuneCountInString(raw))
 			line = ansiSelected + raw + strings.Repeat(" ", pad) + ansiReset
-		} else if gitMark != "" {
-			plain := indent + marker + n.name + suffix
-			line = plain + " " + gitColor(gitMark) + gitMark + ansiReset
+		} else {
+			styled := indent + marker
+			if n.isDir {
+				styled += ansiBlue + n.name + suffix + ansiReset
+			} else {
+				styled += n.name + suffix
+			}
+
+			if gitMark != "" {
+				styled += " " + gitColor(gitMark) + gitMark + ansiReset
+			}
+
+			line = styled
 		}
 
 		b.WriteString(line + "\n")
@@ -350,6 +363,32 @@ func (m *model) rebuildFlat() {
 	}
 
 	m.cursor = clamp(m.cursor, 0, len(m.flat)-1)
+	m.ensureVisible()
+}
+
+func (m *model) maxRows() int {
+	r := m.h - 1
+	if r <= 0 {
+		return len(m.flat)
+	}
+
+	return r
+}
+
+func (m *model) ensureVisible() {
+	mr := m.maxRows()
+	if mr <= 0 {
+		m.scroll = 0
+		return
+	}
+
+	if m.cursor < m.scroll {
+		m.scroll = m.cursor
+	} else if m.cursor >= m.scroll+mr {
+		m.scroll = m.cursor - mr + 1
+	}
+
+	m.scroll = clamp(m.scroll, 0, max(0, len(m.flat)-mr))
 }
 
 func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -362,11 +401,15 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case tea.MouseButtonWheelUp:
 		if m.cursor > 0 {
 			m.cursor--
+			m.ensureVisible()
+
 			return *m, m.syncCurrent()
 		}
 	case tea.MouseButtonWheelDown:
 		if m.cursor < len(m.flat)-1 {
 			m.cursor++
+			m.ensureVisible()
+
 			return *m, m.syncCurrent()
 		}
 	case tea.MouseButtonLeft:
@@ -374,17 +417,7 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return *m, nil
 		}
 
-		maxRows := m.h - 1
-		if maxRows <= 0 {
-			maxRows = len(m.flat)
-		}
-
-		start := 0
-		if m.cursor >= maxRows {
-			start = m.cursor - maxRows + 1
-		}
-
-		idx := start + msg.Y
+		idx := m.scroll + msg.Y
 		if idx < 0 || idx >= len(m.flat) {
 			return *m, nil
 		}
