@@ -347,13 +347,23 @@ func TestSyncCurrentOnFile(t *testing.T) {
 		}
 	}
 	m.msg = "stale"
-	m.syncCurrent()
+	cmd := m.syncCurrent()
+	if cmd == nil {
+		t.Fatal("expected sync command")
+	}
+	nm, next := m.Update(cmd())
+	m = nm.(model)
+	if next != nil {
+		t.Fatal("unexpected follow-up command")
+	}
 	if m.msg != "" {
 		t.Fatalf("expected msg cleared on success, got %q", m.msg)
 	}
 
 	m.vim = "/no/such/binary"
-	m.syncCurrent()
+	cmd = m.syncCurrent()
+	nm, _ = m.Update(cmd())
+	m = nm.(model)
 	if !strings.HasPrefix(m.msg, "error:") {
 		t.Fatalf("expected error msg, got %q", m.msg)
 	}
@@ -471,9 +481,142 @@ func TestUpdateEnterOnFile(t *testing.T) {
 		}
 	}
 	m.msg = "stale"
-	m = send(m, "enter")
+	nm, cmd := m.Update(key("enter"))
+	m = nm.(model)
+	if cmd == nil {
+		t.Fatal("enter on file should return sync command")
+	}
+	nm, _ = m.Update(cmd())
+	m = nm.(model)
 	if m.msg != "" {
 		t.Fatalf("expected msg cleared, got %q", m.msg)
+	}
+}
+
+func TestSyncCurrentOnDirReturnsNoCommand(t *testing.T) {
+	m := newTestModel(t)
+	m.msg = ""
+	if cmd := m.syncCurrent(); cmd != nil {
+		t.Fatal("dir selection should not return sync command")
+	}
+	if m.msg != "" {
+		t.Fatalf("expected no msg for dir, got %q", m.msg)
+	}
+}
+
+func TestCoalescesVimSyncs(t *testing.T) {
+	m := newTestModel(t)
+	m.vim = writeFakeVim(t, `exit 0`)
+	m.server = "EDIT"
+
+	// Move to the first file and start an async sync.
+	nm, cmd := m.Update(key("j")) // b_dir, no sync
+	m = nm.(model)
+	if cmd != nil {
+		t.Fatal("moving to dir should not sync")
+	}
+	nm, cmd = m.Update(key("j")) // a_file.md
+	m = nm.(model)
+	if cmd == nil || !m.syncing || m.pendingPath != "" {
+		t.Fatalf("expected first file sync to start: syncing=%v pending=%q cmd=%v", m.syncing, m.pendingPath, cmd)
+	}
+	active := m.activePath
+
+	// Move again while the first sync is in flight. This must not start a
+	// second process; it should only remember the latest requested file.
+	nm, next := m.Update(key("j")) // z_file.txt
+	m = nm.(model)
+	if next != nil {
+		t.Fatal("second file movement while syncing should not start another command")
+	}
+	if !m.syncing || m.pendingPath == "" || m.pendingPath == active {
+		t.Fatalf("expected pending latest path: syncing=%v active=%q pending=%q", m.syncing, active, m.pendingPath)
+	}
+
+	// Once the first sync completes, exactly one follow-up sync starts for the
+	// latest pending path.
+	nm, next = m.Update(cmd())
+	m = nm.(model)
+	if next == nil || !m.syncing || m.activePath != m.current().path {
+		t.Fatalf("expected follow-up sync for current path: syncing=%v active=%q current=%v next=%v", m.syncing, m.activePath, m.current(), next)
+	}
+	nm, next = m.Update(next())
+	m = nm.(model)
+	if next != nil || m.syncing || m.pendingPath != "" || m.msg != "" {
+		t.Fatalf("expected sync queue to drain cleanly: syncing=%v pending=%q msg=%q next=%v", m.syncing, m.pendingPath, m.msg, next)
+	}
+}
+
+func TestMovingToDirClearsPendingSync(t *testing.T) {
+	m := newTestModel(t)
+	m.vim = writeFakeVim(t, `exit 0`)
+	m.server = "EDIT"
+	m = send(m, "j")              // b_dir
+	nm, cmd := m.Update(key("j")) // a_file.md
+	m = nm.(model)
+	if cmd == nil {
+		t.Fatal("expected first sync command")
+	}
+	nm, _ = m.Update(key("j")) // z_file.txt, pending
+	m = nm.(model)
+	if m.pendingPath == "" {
+		t.Fatal("expected pending path")
+	}
+	nm, next := m.Update(key("k")) // a_file.md, active
+	m = nm.(model)
+	if next != nil {
+		t.Fatal("returning to active path should not start a command")
+	}
+	nm, next = m.Update(key("k")) // b_dir
+	m = nm.(model)
+	if next != nil {
+		t.Fatal("moving to dir should not start a command")
+	}
+	if m.pendingPath != "" {
+		t.Fatalf("moving to dir should clear pending sync, got %q", m.pendingPath)
+	}
+}
+
+func TestReturningToActiveSyncClearsPending(t *testing.T) {
+	m := newTestModel(t)
+	m.vim = writeFakeVim(t, `exit 0`)
+	m.server = "EDIT"
+	m = send(m, "j")              // b_dir
+	nm, cmd := m.Update(key("j")) // a_file.md
+	m = nm.(model)
+	if cmd == nil {
+		t.Fatal("expected first sync command")
+	}
+	active := m.activePath
+	nm, _ = m.Update(key("j")) // z_file.txt, pending
+	m = nm.(model)
+	if m.pendingPath == "" {
+		t.Fatal("expected pending path")
+	}
+	nm, next := m.Update(key("k")) // back to a_file.md, active path
+	m = nm.(model)
+	if next != nil {
+		t.Fatal("returning to active path should not start a command")
+	}
+	if m.current().path != active || m.pendingPath != "" {
+		t.Fatalf("expected pending path cleared when returning to active path: current=%q active=%q pending=%q", m.current().path, active, m.pendingPath)
+	}
+}
+
+func TestStaleSyncErrorDoesNotOverwriteCurrentMessage(t *testing.T) {
+	m := newTestModel(t)
+	m.server = "EDIT"
+	m = send(m, "j", "j") // a_file.md
+	stale := m.current().path
+	m.msg = "keep"
+	m.cursor++ // z_file.txt
+	nm, next := m.Update(vimSyncDoneMsg{path: stale, err: os.ErrNotExist})
+	m = nm.(model)
+	if next != nil {
+		t.Fatal("unexpected follow-up command")
+	}
+	if m.msg != "keep" {
+		t.Fatalf("stale error changed msg: %q", m.msg)
 	}
 }
 

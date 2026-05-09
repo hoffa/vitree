@@ -37,14 +37,22 @@ type node struct {
 }
 
 type model struct {
-	root   *node
-	flat   []*node
-	cursor int
-	vim    string
-	server string
-	msg    string
-	help   bool
-	w, h   int
+	root        *node
+	flat        []*node
+	cursor      int
+	vim         string
+	server      string
+	msg         string
+	help        bool
+	syncing     bool
+	activePath  string
+	pendingPath string
+	w, h        int
+}
+
+type vimSyncDoneMsg struct {
+	path string
+	err  error
 }
 
 func newNode(path string, depth int, parent *node) (*node, error) {
@@ -127,22 +135,61 @@ func (m *model) current() *node {
 	return m.flat[m.cursor]
 }
 
-func (m *model) syncCurrent() {
+func (m *model) syncCurrent() tea.Cmd {
 	cur := m.current()
 	if cur == nil || cur.isDir {
-		return
+		m.pendingPath = ""
+		return nil
 	}
-	if err := openInVim(m.vim, m.server, cur.path); err != nil {
-		m.msg = "error: " + err.Error()
-	} else {
-		m.msg = ""
+	return m.requestSync(cur.path)
+}
+
+func (m *model) requestSync(path string) tea.Cmd {
+	if m.syncing {
+		if path == m.activePath {
+			m.pendingPath = ""
+		} else {
+			m.pendingPath = path
+		}
+		return nil
 	}
+	m.syncing = true
+	m.activePath = path
+	return syncVimCmd(m.vim, m.server, path)
+}
+
+func syncVimCmd(vim, server, path string) tea.Cmd {
+	return func() tea.Msg {
+		return vimSyncDoneMsg{path: path, err: openInVim(vim, server, path)}
+	}
+}
+
+func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
+	m.syncing = false
+	m.activePath = ""
+
+	if cur := m.current(); cur != nil && cur.path == msg.path {
+		if msg.err != nil {
+			m.msg = "error: " + msg.err.Error()
+		} else {
+			m.msg = ""
+		}
+	}
+
+	pending := m.pendingPath
+	m.pendingPath = ""
+	if pending == "" || pending == msg.path {
+		return nil
+	}
+	return m.requestSync(pending)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+	case vimSyncDoneMsg:
+		return m, m.finishSync(msg)
 	case tea.KeyMsg:
 		if m.help {
 			m.help = false
@@ -159,12 +206,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				m.syncCurrent()
+				return m, m.syncCurrent()
 			}
 		case "down", "j":
 			if m.cursor < len(m.flat)-1 {
 				m.cursor++
-				m.syncCurrent()
+				return m, m.syncCurrent()
 			}
 		case "left", "h":
 			cur := m.current()
@@ -176,6 +223,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cur.children = nil
 				cur.loaded = false
 				m.rebuildFlat()
+				m.pendingPath = ""
 			} else if cur.parent != nil && cur.parent != m.root {
 				for i, n := range m.flat {
 					if n == cur.parent {
@@ -183,6 +231,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 				}
+				m.pendingPath = ""
 			}
 		case "right", "l":
 			cur := m.current()
@@ -200,8 +249,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			if !cur.isDir {
-				m.syncCurrent()
-				break
+				return m, m.syncCurrent()
 			}
 			if cur.expanded {
 				cur.expanded = false
