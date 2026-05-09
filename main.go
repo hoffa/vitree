@@ -150,6 +150,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "?":
 			m.help = true
+		case "r":
+			m.refresh()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -168,8 +170,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if cur.isDir && cur.expanded {
 				cur.expanded = false
-				cur.children = nil
-				cur.loaded = false
 
 				m.rebuildFlat()
 				m.pendingPath = ""
@@ -208,8 +208,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if cur.expanded {
 				cur.expanded = false
-				cur.children = nil
-				cur.loaded = false
 			} else {
 				if err := cur.load(); err != nil {
 					m.msg = "error: " + err.Error()
@@ -394,11 +392,39 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 	return m.requestSync(pending)
 }
 
+func (m *model) refresh() {
+	expanded := map[string]bool{}
+
+	m.root.walk(func(n *node) {
+		if n.isDir && n.expanded {
+			expanded[n.path] = true
+		}
+	})
+
+	m.root.children = nil
+	m.root.loaded = false
+
+	if err := m.root.load(); err != nil {
+		m.msg = "error: " + err.Error()
+		return
+	}
+
+	m.root.walk(func(n *node) {
+		if n.isDir && expanded[n.path] {
+			_ = n.load()
+			n.expanded = true
+		}
+	})
+	m.rebuildFlat()
+	m.msg = "refreshed"
+}
+
 func (m model) helpView() string {
 	body := fmt.Sprintf(`keys
   ↑/↓  j/k   `+ansiDim+`move`+ansiReset+`
   ←/→  h/l   `+ansiDim+`collapse / expand`+ansiReset+`
   ⏎          `+ansiDim+`toggle dir / open file`+ansiReset+`
+  r          `+ansiDim+`refresh tree from disk`+ansiReset+`
   ?          `+ansiDim+`toggle this help`+ansiReset+`
   q          `+ansiDim+`quit`+ansiReset+`
 

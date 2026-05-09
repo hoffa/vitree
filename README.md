@@ -26,10 +26,9 @@ Flags:
 | `j` / `k` | move; selected file syncs to vim  |
 | `h` / `l` | collapse / expand                 |
 | `enter`   | toggle dir, or open file          |
+| `r`       | refresh tree from disk            |
 | `?`       | show help and current vim server  |
 | `q`       | quit                              |
-
-Collapsing a dir drops its cached children, so re-expanding re-reads from disk.
 
 ## Requirements
 

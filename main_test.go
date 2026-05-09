@@ -228,9 +228,52 @@ func TestUpdateEnterTogglesDir(t *testing.T) {
 	}
 }
 
-func TestCollapseDropsCache(t *testing.T) {
+func TestUpdateRefresh(t *testing.T) {
 	m := newTestModel(t)
-	m = send(m, "l") // expand a_dir, loads from disk
+
+	m = send(m, "l", "r") // expand a_dir, refresh
+	if m.msg != "refreshed" {
+		t.Fatalf("msg=%q", m.msg)
+	}
+	// expanded state preserved after refresh
+	var aDir *node
+
+	for _, n := range m.flat {
+		if n.name == "a_dir" {
+			aDir = n
+			break
+		}
+	}
+
+	if aDir == nil || !aDir.expanded {
+		t.Fatal("refresh dropped the expanded state")
+	}
+}
+
+func TestRefreshHandlesLoadError(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := newNode(dir, 0, nil)
+	_ = r.load()
+	r.expanded = true
+	m := model{root: r, w: 80, h: 24}
+	m.rebuildFlat()
+
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Skip(err)
+	}
+
+	defer func() { _ = os.Chmod(dir, 0o755) }()
+
+	m.refresh()
+
+	if m.msg == "refreshed" {
+		t.Fatal("expected error msg, got refreshed")
+	}
+}
+
+func TestCollapseKeepsCache(t *testing.T) {
+	m := newTestModel(t)
+	m = send(m, "l") // expand a_dir
 
 	cur := m.current()
 	if !cur.loaded || len(cur.children) == 0 {
@@ -239,8 +282,8 @@ func TestCollapseDropsCache(t *testing.T) {
 
 	m = send(m, "h") // collapse
 
-	if cur.loaded || cur.children != nil {
-		t.Fatal("collapse should drop cache for re-read on next expand")
+	if !cur.loaded || cur.children == nil {
+		t.Fatal("collapse should keep cache; refresh is the only way to drop it")
 	}
 }
 
