@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -225,6 +226,107 @@ func TestUpdateEnterTogglesDir(t *testing.T) {
 	m = send(m, "enter")
 	if len(m.flat) != before {
 		t.Fatal("enter did not collapse dir")
+	}
+}
+
+func TestGitStatus(t *testing.T) {
+	raw := t.TempDir()
+
+	dir, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "init"},
+	} {
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable: %v: %s", err, out)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := newNode(dir, 0, nil)
+	_ = r.load()
+	r.expanded = true
+	m := model{root: r, w: 80, h: 24}
+	m.rebuildFlat()
+	m.loadGitStatus()
+
+	if got := m.gitStatus[filepath.Join(dir, "untracked.txt")]; got != "?" {
+		t.Fatalf("untracked status=%q want=?", got)
+	}
+
+	if !strings.Contains(m.View(), "?") {
+		t.Fatal("view missing ? marker")
+	}
+}
+
+func TestGitStatusBubblesUpToDirs(t *testing.T) {
+	raw := t.TempDir()
+
+	dir, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "init"},
+	} {
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable: %v: %s", err, out)
+		}
+	}
+
+	deep := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(deep, "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	statuses := gitStatus(dir)
+	if statuses[filepath.Join(dir, "a")] != "?" || statuses[filepath.Join(dir, "a", "b")] != "?" {
+		t.Fatalf("expected ancestor dirs marked: %v", statuses)
+	}
+}
+
+func TestGitColor(t *testing.T) {
+	cases := map[string]string{
+		"?": ansiGreen, "A": ansiGreen,
+		"M": ansiYellow, "R": ansiYellow,
+		"D": ansiRed, "U": ansiRed,
+		"X": ansiDim,
+	}
+	for mark, want := range cases {
+		if got := gitColor(mark); got != want {
+			t.Errorf("gitColor(%q)=%q want %q", mark, got, want)
+		}
+	}
+}
+
+func TestLoadGitStatusOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := newNode(dir, 0, nil)
+	_ = r.load()
+	m := model{root: r}
+	m.loadGitStatus()
+
+	if len(m.gitStatus) != 0 {
+		t.Fatal("expected empty gitStatus outside a repo")
 	}
 }
 

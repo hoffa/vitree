@@ -23,7 +23,23 @@ const (
 	ansiSelected = "\x1b[7m"
 	ansiDim      = "\x1b[2m"
 	ansiError    = "\x1b[31m"
+	ansiRed      = "\x1b[31m"
+	ansiGreen    = "\x1b[32m"
+	ansiYellow   = "\x1b[33m"
 )
+
+func gitColor(mark string) string {
+	switch mark {
+	case "?", "A":
+		return ansiGreen
+	case "M", "R":
+		return ansiYellow
+	case "D", "U":
+		return ansiRed
+	}
+
+	return ansiDim
+}
 
 type node struct {
 	path     string
@@ -47,6 +63,7 @@ type model struct {
 	syncing     bool
 	activePath  string
 	pendingPath string
+	gitStatus   map[string]string
 	w, h        int
 }
 
@@ -262,10 +279,18 @@ func (m model) View() string {
 
 		raw := indent + marker + n.name + suffix
 
+		gitMark := m.gitStatus[n.path]
+		if gitMark != "" {
+			raw += " " + gitMark
+		}
+
 		line := raw
 		if i == m.cursor {
 			pad := max(0, m.w-utf8.RuneCountInString(raw))
 			line = ansiSelected + raw + strings.Repeat(" ", pad) + ansiReset
+		} else if gitMark != "" {
+			plain := indent + marker + n.name + suffix
+			line = plain + " " + gitColor(gitMark) + gitMark + ansiReset
 		}
 
 		b.WriteString(line + "\n")
@@ -404,7 +429,61 @@ func (m *model) refresh() {
 		}
 	})
 	m.rebuildFlat()
+	m.loadGitStatus()
 	m.msg = "refreshed"
+}
+
+func (m *model) loadGitStatus() {
+	m.gitStatus = gitStatus(m.root.path)
+}
+
+func gitStatus(dir string) map[string]string {
+	statuses := map[string]string{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	root, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return statuses
+	}
+
+	repoRoot := strings.TrimSpace(string(root))
+
+	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain", "--untracked-files=all").Output()
+	if err != nil {
+		return statuses
+	}
+
+	priority := map[string]int{"?": 0, "R": 1, "D": 2, "A": 3, "M": 4}
+	bumpDir := func(p, mark string) {
+		if cur, ok := statuses[p]; !ok || priority[mark] > priority[cur] {
+			statuses[p] = mark
+		}
+	}
+
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+
+		code, rel := line[:2], line[3:]
+		mark := strings.TrimSpace(code)
+
+		if mark == "" {
+			continue
+		}
+
+		short := string(mark[len(mark)-1])
+		path := filepath.Join(repoRoot, rel)
+		statuses[path] = short
+
+		for parent := filepath.Dir(path); parent != repoRoot && parent != "/" && parent != "."; parent = filepath.Dir(parent) {
+			bumpDir(parent, short)
+		}
+	}
+
+	return statuses
 }
 
 func (m model) helpView() string {
@@ -489,6 +568,10 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, err
 	}
 
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+
 	root, err := newNode(abs, 0, nil)
 	if err != nil {
 		return model{}, err
@@ -505,6 +588,7 @@ func newModel(vim, server, path string) (model, error) {
 	root.expanded = true
 	m := model{root: root, server: server, vim: vim}
 	m.rebuildFlat()
+	m.loadGitStatus()
 
 	return m, nil
 }
