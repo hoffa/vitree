@@ -9,9 +9,16 @@ Vim file browser in a separate process.
 ## Install
 
 ```sh
-brew install vim
 go install github.com/hoffa/vitree@latest
 ```
+
+> [!NOTE]
+>
+> You also need Vim compiled with `+clientserver`. On macOS, you can install Vim using:
+>
+> ```bash
+> brew install vim
+> ```
 
 ## Use
 
