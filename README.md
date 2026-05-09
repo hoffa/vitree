@@ -18,7 +18,7 @@ go install github.com/hoffa/vitree@latest
 Start vim with a server name:
 
 ```sh
-vim --servername VIM
+vim --servername vim
 ```
 
 In another terminal, from the project root:
