@@ -25,6 +25,7 @@ Flags:
 |-----------|-----------------------------------|
 | `j` / `k` | move; selected file syncs to vim  |
 | `h` / `l` | collapse / expand                 |
+| `g` / `G` | jump to top / bottom              |
 | `enter`   | toggle dir, or open file          |
 | `r`       | refresh tree from disk            |
 | `?`       | show help and current vim server  |

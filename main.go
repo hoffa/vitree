@@ -269,9 +269,9 @@ func (m model) View() string {
 
 		if n.isDir {
 			if n.expanded {
-				marker = "▼ "
+				marker = "- "
 			} else {
-				marker = "▶ "
+				marker = "+ "
 			}
 
 			suffix = "/"
@@ -490,13 +490,13 @@ func gitStatus(dir string) map[string]string {
 
 func (m model) helpView() string {
 	body := `keys
-  ↑/↓  j/k   move
-  ←/→  h/l   collapse / expand
-  g / G      jump to top / bottom
-  ⏎          toggle dir / open file
-  r          refresh tree from disk
-  ?          toggle this help
-  q          quit
+  up/down    j/k     move
+  left/right h/l     collapse / expand
+  g / G              jump to top / bottom
+  enter              toggle dir / open file
+  r                  refresh tree from disk
+  ?                  toggle this help
+  q                  quit
 
 vim server
   ` + m.server
