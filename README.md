@@ -15,9 +15,16 @@ go install github.com/hoffa/vitree@latest
 
 ## Use
 
+Start vim with a server name:
+
 ```sh
-vim --servername VIM    # in one terminal
-vitree                  # in another, in the project root
+vim --servername VIM
+```
+
+In another terminal, from the project root:
+
+```sh
+vitree
 ```
 
 Press `?` inside vitree for keys and the connected server.
