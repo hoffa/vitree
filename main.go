@@ -115,10 +115,6 @@ func (n *node) load() error {
 	})
 
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-
 		c, err := newNode(filepath.Join(n.path, e.Name()), n.depth+1, n)
 		if err != nil {
 			continue

@@ -19,8 +19,6 @@ func mkTree(t *testing.T) string {
 		"a_dir/x.go",
 		"z_file.txt",
 		"a_file.md",
-		".hidden/secret",
-		".dotfile",
 	} {
 		full := filepath.Join(root, p)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -44,8 +42,16 @@ func names(ns []*node) []string {
 	return out
 }
 
-func TestLoadSortsDirsFirstAndSkipsHidden(t *testing.T) {
+func TestLoadSortsDirsFirst(t *testing.T) {
 	root := mkTree(t)
+
+	if err := os.WriteFile(filepath.Join(root, ".dotfile"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, ".hidden"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	n, err := newNode(root, 0, nil)
 	if err != nil {
@@ -58,7 +64,7 @@ func TestLoadSortsDirsFirstAndSkipsHidden(t *testing.T) {
 
 	got := names(n.children)
 
-	want := []string{"a_dir", "b_dir", "a_file.md", "z_file.txt"}
+	want := []string{".hidden", "a_dir", "b_dir", ".dotfile", "a_file.md", "z_file.txt"}
 	if len(got) != len(want) {
 		t.Fatalf("children=%v want=%v", got, want)
 	}
