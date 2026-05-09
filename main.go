@@ -420,16 +420,16 @@ func (m *model) refresh() {
 }
 
 func (m model) helpView() string {
-	body := fmt.Sprintf(`keys
-  ↑/↓  j/k   `+ansiDim+`move`+ansiReset+`
-  ←/→  h/l   `+ansiDim+`collapse / expand`+ansiReset+`
-  ⏎          `+ansiDim+`toggle dir / open file`+ansiReset+`
-  r          `+ansiDim+`refresh tree from disk`+ansiReset+`
-  ?          `+ansiDim+`toggle this help`+ansiReset+`
-  q          `+ansiDim+`quit`+ansiReset+`
+	body := `keys
+  ↑/↓  j/k   move
+  ←/→  h/l   collapse / expand
+  ⏎          toggle dir / open file
+  r          refresh tree from disk
+  ?          toggle this help
+  q          quit
 
 vim server
-  %s`, m.server)
+  ` + m.server
 	hint := "press any key to close"
 	gap := max(0, m.h-strings.Count(body, "\n")-2)
 	pad := max(0, m.w-utf8.RuneCountInString(hint))
