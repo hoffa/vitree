@@ -20,18 +20,18 @@ go install github.com/hoffa/vitree@latest
 > brew install vim
 > ```
 
-## Use
+## Usage
 
-Start vim with a server name:
+Start Vim with a server name:
 
 ```sh
 vim --servername vim
 ```
 
-In another terminal, from the project root:
+In another terminal, run:
 
 ```sh
 vitree
 ```
 
-Press `?` inside vitree for keys and the connected server.
+Press `?` inside vitree for help.
