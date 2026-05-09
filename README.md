@@ -2,7 +2,9 @@
 
 [![check](https://github.com/hoffa/vitree/actions/workflows/check.yml/badge.svg)](https://github.com/hoffa/vitree/actions/workflows/check.yml)
 
-Interactive file tree that opens files in a running vim session.
+Project tree as its own tmux pane — click a file and it opens in your running vim.
+
+Skip netrw / NERDTree / nvim-tree. vitree runs as its own process, so you don't learn vim window navigation just to browse a directory; tmux pane management you already know does the job.
 
 <img width="1012" height="711" alt="스크린샷 2026-05-10 01 16 09" src="https://github.com/user-attachments/assets/23e92baa-c4a2-46f7-b010-492cbc70fdda" />
 
