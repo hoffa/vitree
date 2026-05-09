@@ -296,11 +296,11 @@ func (m model) View() string {
 			pad := max(0, m.w-utf8.RuneCountInString(raw))
 			line = ansiSelected + raw + strings.Repeat(" ", pad) + ansiReset
 		} else {
-			styled := indent + marker
+			styled := indent
 			if n.isDir {
-				styled += ansiBlue + n.name + suffix + ansiReset
+				styled += ansiDim + marker + ansiReset + ansiBlue + n.name + suffix + ansiReset
 			} else {
-				styled += n.name + suffix
+				styled += marker + n.name + suffix
 			}
 
 			if gitMark != "" {

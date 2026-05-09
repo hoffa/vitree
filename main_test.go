@@ -753,7 +753,7 @@ func TestViewWithExpandedDir(t *testing.T) {
 	m := newTestModel(t)
 
 	m = send(m, "l", "j") // expand a_dir, move off it
-	if !strings.Contains(m.View(), "- \x1b[34ma_dir/") {
+	if !strings.Contains(m.View(), "\x1b[2m- \x1b[0m\x1b[34ma_dir/") {
 		t.Fatal("expanded dir marker missing")
 	}
 }
