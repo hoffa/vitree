@@ -7,30 +7,15 @@ Interactive file tree that opens files in a running vim session.
 ## Install
 
 ```sh
+brew install vim
 go install github.com/hoffa/vitree@latest
 ```
 
-## Usage
+## Use
 
-Start vim with `--servername`, then run `vitree` from the project root in another terminal. The selected file syncs to vim as you move.
+```sh
+vim --servername VIM    # in one terminal
+vitree                  # in another, in the project root
+```
 
-Flags:
-
-- `-server NAME` — pick a specific vim server (auto-detected if there's only one running)
-- `-vim PATH` — vim binary to invoke (default `vim`)
-
-## Keys
-
-| key       | action                            |
-|-----------|-----------------------------------|
-| `j` / `k` | move; selected file syncs to vim  |
-| `h` / `l` | collapse / expand                 |
-| `g` / `G` | jump to top / bottom              |
-| `enter`   | toggle dir, or open file          |
-| `r`       | refresh tree from disk            |
-| `?`       | show help and current vim server  |
-| `q`       | quit                              |
-
-## Requirements
-
-A vim built with `+clientserver`. On macOS the system `vim` doesn't have it — `brew install vim`.
+Press `?` inside vitree for keys and the connected server.
