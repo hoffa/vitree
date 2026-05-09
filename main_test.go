@@ -204,6 +204,63 @@ func TestUpdateNavigation(t *testing.T) {
 	}
 }
 
+func TestMouseWheel(t *testing.T) {
+	m := newTestModel(t)
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if nm.(model).cursor != 1 {
+		t.Fatalf("wheel-down cursor=%d want=1", nm.(model).cursor)
+	}
+
+	nm, _ = nm.(model).Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress})
+	if nm.(model).cursor != 0 {
+		t.Fatalf("wheel-up cursor=%d want=0", nm.(model).cursor)
+	}
+}
+
+func TestMouseClickFileSelects(t *testing.T) {
+	m := newTestModel(t)
+	// row 2 in mkTree's layout is "z_file.txt" (after a_dir, b_dir)
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 2})
+	if nm.(model).cursor != 2 {
+		t.Fatalf("click row 2 cursor=%d want=2", nm.(model).cursor)
+	}
+}
+
+func TestMouseClickDirToggles(t *testing.T) {
+	m := newTestModel(t)
+	before := len(m.flat)
+	// row 0 is "a_dir"
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 0})
+	if len(nm.(model).flat) <= before {
+		t.Fatal("click on dir did not expand")
+	}
+
+	nm, _ = nm.(model).Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 0})
+	if len(nm.(model).flat) != before {
+		t.Fatal("second click on dir did not collapse")
+	}
+}
+
+func TestMouseClickIgnoresOutOfRange(t *testing.T) {
+	m := newTestModel(t)
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 999})
+	if nm.(model).cursor != 0 {
+		t.Fatalf("out-of-range click moved cursor: %d", nm.(model).cursor)
+	}
+}
+
+func TestMouseDismissesHelp(t *testing.T) {
+	m := newTestModel(t)
+	m.help = true
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if nm.(model).help {
+		t.Fatal("mouse should dismiss help")
+	}
+}
+
 func TestUpdateJumpTopBottom(t *testing.T) {
 	m := newTestModel(t)
 

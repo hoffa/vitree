@@ -146,6 +146,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 	case vimSyncDoneMsg:
 		return m, m.finishSync(msg)
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		if m.help {
 			m.help = false
@@ -348,6 +350,68 @@ func (m *model) rebuildFlat() {
 	}
 
 	m.cursor = clamp(m.cursor, 0, len(m.flat)-1)
+}
+
+func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.help {
+		m.help = false
+		return *m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if m.cursor > 0 {
+			m.cursor--
+			return *m, m.syncCurrent()
+		}
+	case tea.MouseButtonWheelDown:
+		if m.cursor < len(m.flat)-1 {
+			m.cursor++
+			return *m, m.syncCurrent()
+		}
+	case tea.MouseButtonLeft:
+		if msg.Action != tea.MouseActionPress {
+			return *m, nil
+		}
+
+		maxRows := m.h - 1
+		if maxRows <= 0 {
+			maxRows = len(m.flat)
+		}
+
+		start := 0
+		if m.cursor >= maxRows {
+			start = m.cursor - maxRows + 1
+		}
+
+		idx := start + msg.Y
+		if idx < 0 || idx >= len(m.flat) {
+			return *m, nil
+		}
+
+		m.cursor = idx
+
+		cur := m.flat[idx]
+		if cur.isDir {
+			if cur.expanded {
+				cur.expanded = false
+			} else {
+				if err := cur.load(); err != nil {
+					m.msg = "error: " + err.Error()
+				}
+
+				cur.expanded = true
+			}
+
+			m.rebuildFlat()
+
+			return *m, nil
+		}
+
+		return *m, m.syncCurrent()
+	}
+
+	return *m, nil
 }
 
 func (m *model) current() *node {
@@ -597,7 +661,7 @@ func newModel(vim, server, path string) (model, error) {
 }
 
 var runProgram = func(m tea.Model) error {
-	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
