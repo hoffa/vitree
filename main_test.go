@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fsnotify/fsnotify"
 )
 
 func mkTree(t *testing.T) string {
@@ -327,6 +329,13 @@ exit 2
 	}
 }
 
+func TestOpenInVimTimeout(t *testing.T) {
+	vim := writeFakeVim(t, `sleep 2`)
+	if err := openInVim(vim, "EDIT", "/tmp/x"); err == nil || !strings.Contains(err.Error(), "not responding") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
 func TestSyncCurrentOnDirIsNoop(t *testing.T) {
 	m := newTestModel(t)
 	m.msg = ""
@@ -541,6 +550,284 @@ func TestNewModelLoadError(t *testing.T) {
 	if _, err := newModel(vim, "X", dir); err == nil {
 		t.Fatal("expected load error")
 	}
+}
+
+func TestLoadNoops(t *testing.T) {
+	root := mkTree(t)
+	file, err := newNode(filepath.Join(root, "z_file.txt"), 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.load(); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, err := newNode(root, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir.loaded = true
+	if err := dir.load(); err != nil {
+		t.Fatal(err)
+	}
+	if len(dir.children) != 0 {
+		t.Fatal("loaded dir should not reload")
+	}
+}
+
+func TestRefreshFromDiskNoRoot(t *testing.T) {
+	m := model{}
+	if err := m.refreshFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRefreshFromDiskSelectionDeleted(t *testing.T) {
+	m := newTestModel(t)
+	for i, n := range m.flat {
+		if n.name == "z_file.txt" {
+			m.cursor = i
+			break
+		}
+	}
+	if err := os.Remove(filepath.Join(m.root.path, "z_file.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.refreshFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+	if m.current() == nil {
+		t.Fatal("cursor should clamp to an existing row")
+	}
+}
+
+func TestRefreshFromDiskUpdatesTopLevel(t *testing.T) {
+	m := newTestModel(t)
+	root := m.root.path
+	if err := os.WriteFile(filepath.Join(root, "new.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "z_file.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.refreshFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+	got := names(m.flat)
+	if !contains(got, "new.txt") {
+		t.Fatalf("refresh did not add new file: %v", got)
+	}
+	if contains(got, "z_file.txt") {
+		t.Fatalf("refresh did not remove deleted file: %v", got)
+	}
+}
+
+func TestRefreshFromDiskPreservesExpansionAndSelection(t *testing.T) {
+	m := newTestModel(t)
+	m = send(m, "l", "j") // expand a_dir and select x.go
+	selected := m.current().path
+	if err := os.WriteFile(filepath.Join(m.root.path, "a_dir", "new.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.refreshFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+	if m.current() == nil || m.current().path != selected {
+		t.Fatalf("selection changed: got=%v want=%s", m.current(), selected)
+	}
+	got := names(m.flat)
+	if !contains(got, "new.go") {
+		t.Fatalf("expanded dir did not refresh: %v", got)
+	}
+}
+
+func TestUpdateHandlesFsMessages(t *testing.T) {
+	m := newTestModel(t)
+	m.watch = true
+	m.msg = "error: watching files: stale"
+	nm, cmd := m.Update(fsEventMsg{})
+	m = nm.(model)
+	if m.msg != "" {
+		t.Fatalf("expected watcher error to clear after refresh, got %q", m.msg)
+	}
+	if cmd == nil {
+		t.Fatal("fs event should restart watcher")
+	}
+
+	nm, cmd = m.Update(fsErrorMsg{err: os.ErrNotExist})
+	m = nm.(model)
+	if !strings.Contains(m.msg, "watching files") {
+		t.Fatalf("expected watcher error message, got %q", m.msg)
+	}
+	if cmd == nil {
+		t.Fatal("fs error should restart watcher")
+	}
+}
+
+func TestInitStartsWatcherOnlyWhenEnabled(t *testing.T) {
+	m := newTestModel(t)
+	m.watch = false
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("watch disabled should not start watcher")
+	}
+	m.watch = true
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("watch enabled should start watcher")
+	}
+	m.root = nil
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("nil root should not start watcher")
+	}
+}
+
+func TestAddRecursiveWatches(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"a", "a/b", ".hidden", ".hidden/child"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "plain-file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := addRecursiveWatches(w, root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a", "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-w.Events:
+		if !strings.HasSuffix(event.Name, "file.txt") {
+			t.Fatalf("unexpected event: %v", event)
+		}
+	case err := <-w.Errors:
+		t.Fatal(err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for watched dir event")
+	}
+}
+
+func TestAddRecursiveWatchesErrors(t *testing.T) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := addRecursiveWatches(w, filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("expected error for missing root")
+	}
+}
+
+func TestWatchDirReturnsEvent(t *testing.T) {
+	root := t.TempDir()
+	cmd := watchDir(root)
+	msgs := make(chan tea.Msg, 1)
+	go func() { msgs <- cmd() }()
+	time.Sleep(100 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(root, "created.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-msgs:
+		if _, ok := msg.(fsEventMsg); !ok {
+			t.Fatalf("got %T, want fsEventMsg", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for watch event")
+	}
+}
+
+func TestWatchDirReturnsErrorForMissingRoot(t *testing.T) {
+	msg := watchDir(filepath.Join(t.TempDir(), "missing"))()
+	if _, ok := msg.(fsErrorMsg); !ok {
+		t.Fatalf("got %T, want fsErrorMsg", msg)
+	}
+}
+
+func TestWaitForChange(t *testing.T) {
+	events := make(chan fsnotify.Event, 2)
+	errors := make(chan error)
+	events <- fsnotify.Event{Name: ".hidden", Op: fsnotify.Create}
+	events <- fsnotify.Event{Name: "visible", Op: fsnotify.Create}
+	if _, ok := waitForChange(events, errors).(fsEventMsg); !ok {
+		t.Fatal("visible event should return fsEventMsg")
+	}
+
+	events = make(chan fsnotify.Event)
+	errors = make(chan error, 1)
+	errors <- os.ErrPermission
+	if _, ok := waitForChange(events, errors).(fsErrorMsg); !ok {
+		t.Fatal("watcher error should return fsErrorMsg")
+	}
+
+	events = make(chan fsnotify.Event)
+	errors = make(chan error)
+	close(events)
+	if _, ok := waitForChange(events, errors).(fsErrorMsg); !ok {
+		t.Fatal("closed events should return fsErrorMsg")
+	}
+
+	events = make(chan fsnotify.Event)
+	errors = make(chan error)
+	close(errors)
+	if _, ok := waitForChange(events, errors).(fsErrorMsg); !ok {
+		t.Fatal("closed errors should return fsErrorMsg")
+	}
+}
+
+func TestReloadExpandedBranches(t *testing.T) {
+	m := newTestModel(t)
+	if err := reloadExpanded(m.flat[0], map[string]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	if m.flat[0].loaded || m.flat[0].children != nil {
+		t.Fatal("collapsed reload should clear cached children")
+	}
+	for _, n := range m.flat {
+		if !n.isDir {
+			if err := reloadExpanded(n, map[string]bool{}); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatal("no file found")
+}
+
+func TestShouldRefreshIgnoresHiddenFiles(t *testing.T) {
+	if shouldRefresh(fsnotify.Event{Name: ".hidden", Op: fsnotify.Create}) {
+		t.Fatal("hidden file event should not refresh")
+	}
+	if !shouldRefresh(fsnotify.Event{Name: "visible", Op: fsnotify.Create}) {
+		t.Fatal("visible create event should refresh")
+	}
+	if !shouldRefresh(fsnotify.Event{Name: "visible", Op: fsnotify.Remove}) {
+		t.Fatal("visible remove event should refresh")
+	}
+	if !shouldRefresh(fsnotify.Event{Name: "visible", Op: fsnotify.Rename}) {
+		t.Fatal("visible rename event should refresh")
+	}
+	if !shouldRefresh(fsnotify.Event{Name: "visible", Op: fsnotify.Write}) {
+		t.Fatal("visible write event should refresh")
+	}
+	if shouldRefresh(fsnotify.Event{Name: "visible", Op: fsnotify.Chmod}) {
+		t.Fatal("chmod event should not refresh")
+	}
+}
+
+func contains(xs []string, x string) bool {
+	for _, got := range xs {
+		if got == x {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWindowSizeMsg(t *testing.T) {

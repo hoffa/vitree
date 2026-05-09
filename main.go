@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fsnotify/fsnotify"
 )
 
 const (
@@ -44,8 +45,13 @@ type model struct {
 	server string
 	msg    string
 	help   bool
+	watch  bool
 	w, h   int
 }
+
+type fsEventMsg struct{}
+
+type fsErrorMsg struct{ err error }
 
 func newNode(path string, depth int, parent *node) (*node, error) {
 	info, err := os.Lstat(path)
@@ -72,6 +78,13 @@ func (n *node) load() error {
 	if !n.isDir || n.loaded {
 		return nil
 	}
+	return n.reload()
+}
+
+func (n *node) reload() error {
+	if !n.isDir {
+		return nil
+	}
 	entries, err := os.ReadDir(n.path)
 	if err != nil {
 		return err
@@ -83,6 +96,7 @@ func (n *node) load() error {
 		}
 		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
 	})
+	n.children = nil
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -118,7 +132,12 @@ func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd {
+	if !m.watch || m.root == nil {
+		return nil
+	}
+	return watchDir(m.root.path)
+}
 
 func (m *model) current() *node {
 	if m.cursor < 0 || m.cursor >= len(m.flat) {
@@ -139,10 +158,76 @@ func (m *model) syncCurrent() {
 	}
 }
 
+func (m *model) refreshFromDisk() error {
+	if m.root == nil {
+		return nil
+	}
+	selected := ""
+	if cur := m.current(); cur != nil {
+		selected = cur.path
+	}
+	expanded := map[string]bool{}
+	m.root.walk(func(n *node) {
+		if n.isDir && n.expanded {
+			expanded[n.path] = true
+		}
+	})
+	if err := reloadExpanded(m.root, expanded); err != nil {
+		return err
+	}
+	m.rebuildFlat()
+	if selected != "" {
+		for i, n := range m.flat {
+			if n.path == selected {
+				m.cursor = i
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func reloadExpanded(n *node, expanded map[string]bool) error {
+	if !n.isDir {
+		return nil
+	}
+	n.expanded = expanded[n.path]
+	if !n.expanded {
+		n.children = nil
+		n.loaded = false
+		return nil
+	}
+	if err := n.reload(); err != nil {
+		return err
+	}
+	for _, c := range n.children {
+		if expanded[c.path] {
+			if err := reloadExpanded(c, expanded); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+	case fsEventMsg:
+		if err := m.refreshFromDisk(); err != nil {
+			m.msg = "error: " + err.Error()
+		} else if strings.HasPrefix(m.msg, "error: watching files:") {
+			m.msg = ""
+		}
+		if m.watch {
+			return m, watchDir(m.root.path)
+		}
+	case fsErrorMsg:
+		m.msg = "error: watching files: " + msg.err.Error()
+		if m.watch {
+			return m, watchDir(m.root.path)
+		}
 	case tea.KeyMsg:
 		if m.help {
 			m.help = false
@@ -348,6 +433,63 @@ func openInVim(vim, server, path string) error {
 	return nil
 }
 
+func watchDir(path string) tea.Cmd {
+	return func() tea.Msg {
+		w, err := fsnotify.NewWatcher()
+		if err != nil {
+			return fsErrorMsg{err: err}
+		}
+		defer w.Close()
+
+		if err := addRecursiveWatches(w, path); err != nil {
+			return fsErrorMsg{err: err}
+		}
+
+		return waitForChange(w.Events, w.Errors)
+	}
+}
+
+func waitForChange(events <-chan fsnotify.Event, errors <-chan error) tea.Msg {
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				return fsErrorMsg{err: fmt.Errorf("watcher closed")}
+			}
+			if shouldRefresh(event) {
+				return fsEventMsg{}
+			}
+		case err, ok := <-errors:
+			if !ok {
+				return fsErrorMsg{err: fmt.Errorf("watcher closed")}
+			}
+			return fsErrorMsg{err: err}
+		}
+	}
+}
+
+func addRecursiveWatches(w *fsnotify.Watcher, root string) error {
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != root && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		return w.Add(path)
+	})
+}
+
+func shouldRefresh(event fsnotify.Event) bool {
+	if strings.HasPrefix(filepath.Base(event.Name), ".") {
+		return false
+	}
+	return event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Write)
+}
+
 func newModel(vim, server, path string) (model, error) {
 	if server == "" {
 		detected, err := detectVimServer(vim)
@@ -371,7 +513,7 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, err
 	}
 	root.expanded = true
-	m := model{root: root, server: server, vim: vim}
+	m := model{root: root, server: server, vim: vim, watch: true}
 	m.rebuildFlat()
 	return m, nil
 }

@@ -2,7 +2,10 @@ module github.com/hoffa/vitree
 
 go 1.26.3
 
-require github.com/charmbracelet/bubbletea v1.3.10
+require (
+	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/fsnotify/fsnotify v1.10.1
+)
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
