@@ -417,6 +417,10 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return *m, nil
 		}
 
+		if msg.Y < 0 || msg.Y >= m.maxRows() {
+			return *m, nil
+		}
+
 		idx := m.scroll + msg.Y
 		if idx < 0 || idx >= len(m.flat) {
 			return *m, nil
@@ -515,6 +519,7 @@ func (m *model) refresh() {
 
 	m.root.children = nil
 	m.root.loaded = false
+	m.pendingPath = ""
 
 	if err := m.root.load(); err != nil {
 		m.msg = "error: " + err.Error()
@@ -574,6 +579,11 @@ func gitStatus(dir string) map[string]string {
 		}
 
 		short := string(mark[len(mark)-1])
+
+		if i := strings.Index(rel, " -> "); i >= 0 {
+			rel = rel[i+len(" -> "):]
+		}
+
 		path := filepath.Join(repoRoot, rel)
 		statuses[path] = short
 

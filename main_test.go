@@ -251,6 +251,52 @@ func TestMouseClickIgnoresOutOfRange(t *testing.T) {
 	}
 }
 
+func TestMouseClickIgnoresNegativeY(t *testing.T) {
+	m := newTestModel(t)
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: -1})
+	if nm.(model).cursor != 0 {
+		t.Fatalf("negative-Y click moved cursor: %d", nm.(model).cursor)
+	}
+}
+
+func TestMouseReleaseIgnored(t *testing.T) {
+	m := newTestModel(t)
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: 0})
+	if nm.(model).cursor != 0 {
+		t.Fatalf("release should be ignored: cursor=%d", nm.(model).cursor)
+	}
+}
+
+func TestEnsureVisibleZeroHeight(t *testing.T) {
+	m := newTestModel(t)
+	m.h = 0
+	m.scroll = 5
+	m.ensureVisible()
+
+	if m.scroll != 0 {
+		t.Fatalf("zero-height ensureVisible scroll=%d want=0", m.scroll)
+	}
+}
+
+func TestMouseClickIgnoresFooterRow(t *testing.T) {
+	m := newTestModel(t)
+	// Shrink the viewport so we have a tree taller than the rendered area,
+	// then click on the footer row (Y == maxRows). The off-screen item must
+	// not get selected.
+	m.h = 3 // maxRows == 2
+
+	if len(m.flat) <= 2 {
+		t.Skip("need a tree taller than viewport")
+	}
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 2})
+	if nm.(model).cursor != 0 {
+		t.Fatalf("footer click selected an off-screen row: cursor=%d", nm.(model).cursor)
+	}
+}
+
 func TestMouseDismissesHelp(t *testing.T) {
 	m := newTestModel(t)
 	m.help = true
@@ -381,6 +427,42 @@ func TestGitStatusBubblesUpToDirs(t *testing.T) {
 	}
 }
 
+func TestGitStatusRename(t *testing.T) {
+	raw := t.TempDir()
+
+	dir, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "add", "a.txt"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "mv", "a.txt", "b.txt"},
+	} {
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable: %v: %s", err, out)
+		}
+	}
+
+	statuses := gitStatus(dir)
+	if statuses[filepath.Join(dir, "b.txt")] != "R" {
+		t.Fatalf("expected new path marked R, got: %v", statuses)
+	}
+
+	if _, ok := statuses[filepath.Join(dir, "a.txt -> b.txt")]; ok {
+		t.Fatalf("rename arrow leaked into path: %v", statuses)
+	}
+}
+
 func TestGitColor(t *testing.T) {
 	cases := map[string]string{
 		"?": ansiGreen, "A": ansiGreen,
@@ -426,6 +508,16 @@ func TestUpdateRefresh(t *testing.T) {
 
 	if aDir == nil || !aDir.expanded {
 		t.Fatal("refresh dropped the expanded state")
+	}
+}
+
+func TestRefreshClearsPendingSync(t *testing.T) {
+	m := newTestModel(t)
+	m.pendingPath = "/some/stale/path"
+	m.refresh()
+
+	if m.pendingPath != "" {
+		t.Fatalf("refresh did not clear pendingPath: %q", m.pendingPath)
 	}
 }
 
