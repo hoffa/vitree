@@ -4,7 +4,7 @@
 
 Vim file browser in a separate process.
 
-<img width="1012" height="711" alt="스크린샷 2026-05-10 01 16 09" src="https://github.com/user-attachments/assets/23e92baa-c4a2-46f7-b010-492cbc70fdda" />
+<img width="1029" height="717" alt="스크린샷 2026-05-10 21 28 37" src="https://github.com/user-attachments/assets/1a2c15ab-ac99-4e58-a382-d1ea766f9664" />
 
 ## Install
 
