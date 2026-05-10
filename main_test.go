@@ -251,6 +251,35 @@ func TestMouseClickIgnoresOutOfRange(t *testing.T) {
 	}
 }
 
+func TestMouseClickIgnoresNegativeY(t *testing.T) {
+	m := newTestModel(t)
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: -1})
+	if nm.(model).cursor != 0 {
+		t.Fatalf("negative-Y click moved cursor: %d", nm.(model).cursor)
+	}
+}
+
+func TestMouseReleaseIgnored(t *testing.T) {
+	m := newTestModel(t)
+
+	nm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: 0})
+	if nm.(model).cursor != 0 {
+		t.Fatalf("release should be ignored: cursor=%d", nm.(model).cursor)
+	}
+}
+
+func TestEnsureVisibleZeroHeight(t *testing.T) {
+	m := newTestModel(t)
+	m.h = 0
+	m.scroll = 5
+	m.ensureVisible()
+
+	if m.scroll != 0 {
+		t.Fatalf("zero-height ensureVisible scroll=%d want=0", m.scroll)
+	}
+}
+
 func TestMouseClickIgnoresFooterRow(t *testing.T) {
 	m := newTestModel(t)
 	// Shrink the viewport so we have a tree taller than the rendered area,
