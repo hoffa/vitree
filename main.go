@@ -47,8 +47,7 @@ type model struct {
 	server      string
 	msg         string
 	help        bool
-	hideIgnored bool
-	changedOnly bool
+	filter      filterMode
 	refreshing  bool
 	syncing     bool
 	activePath  string
@@ -56,6 +55,14 @@ type model struct {
 	gitStatus   map[string]string
 	w, h        int
 }
+
+type filterMode int
+
+const (
+	filterDefault filterMode = iota
+	filterChanged
+	filterAll
+)
 
 type autoRefreshTickMsg struct{}
 
@@ -182,12 +189,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "?":
 			m.help = true
-		case "i":
-			m.hideIgnored = !m.hideIgnored
+		case "f":
+			m.filter = (m.filter + 1) % 3
 			m.refreshWithMessage("")
-		case "c":
-			m.changedOnly = !m.changedOnly
-			m.rebuildFlat()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -240,7 +244,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 
-			if err := cur.load(m.hideIgnored); err != nil {
+			if err := cur.load(m.hideIgnored()); err != nil {
 				m.msg = "error: " + err.Error()
 			}
 
@@ -260,7 +264,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cur.expanded {
 				cur.expanded = false
 			} else {
-				if err := cur.load(m.hideIgnored); err != nil {
+				if err := cur.load(m.hideIgnored()); err != nil {
 					m.msg = "error: " + err.Error()
 				}
 
@@ -350,12 +354,12 @@ func (m model) View() string {
 	}
 
 	right := "? help"
-	if !m.hideIgnored {
-		right = "gitignore off · " + right
-	}
 
-	if m.changedOnly {
+	switch m.filter {
+	case filterChanged:
 		right = "changed only · " + right
+	case filterAll:
+		right = "showing all · " + right
 	}
 
 	rightStyled := ansiDim + right + ansiReset
@@ -368,6 +372,9 @@ func (m model) View() string {
 
 	return b.String()
 }
+
+func (m model) hideIgnored() bool { return m.filter != filterAll }
+func (m model) changedOnly() bool { return m.filter == filterChanged }
 
 func truncateLeft(s string, maxWidth int) string {
 	runes := []rune(s)
@@ -388,14 +395,14 @@ func (m *model) rebuildFlat() {
 	var walk func(n *node)
 
 	walk = func(n *node) {
-		if m.changedOnly && m.gitStatus[n.path] == "" {
+		if m.changedOnly() && m.gitStatus[n.path] == "" {
 			return
 		}
 
 		m.flat = append(m.flat, n)
-		if n.isDir && (n.expanded || m.changedOnly) {
-			if m.changedOnly && !n.loaded {
-				_ = n.load(m.hideIgnored)
+		if n.isDir && (n.expanded || m.changedOnly()) {
+			if m.changedOnly() && !n.loaded {
+				_ = n.load(m.hideIgnored())
 			}
 
 			for _, c := range n.children {
@@ -478,7 +485,7 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if cur.expanded {
 				cur.expanded = false
 			} else {
-				if err := cur.load(m.hideIgnored); err != nil {
+				if err := cur.load(m.hideIgnored()); err != nil {
 					m.msg = "error: " + err.Error()
 				}
 
@@ -555,7 +562,7 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 
 func (m model) asyncRefreshCmd() tea.Cmd {
 	rootPath := m.root.path
-	hideIgnored := m.hideIgnored
+	hideIgnored := m.hideIgnored()
 
 	expanded := map[string]bool{}
 
@@ -606,7 +613,7 @@ func (m *model) applyRefresh(msg refreshResultMsg) {
 
 	msg.root.walk(func(n *node) {
 		if n.isDir && nowExpanded[n.path] && !n.expanded {
-			_ = n.load(m.hideIgnored)
+			_ = n.load(m.hideIgnored())
 			n.expanded = true
 		}
 	})
@@ -641,14 +648,14 @@ func (m *model) refreshWithMessage(success string) {
 	m.root.loaded = false
 	m.pendingPath = ""
 
-	if err := m.root.load(m.hideIgnored); err != nil {
+	if err := m.root.load(m.hideIgnored()); err != nil {
 		m.msg = "error: " + err.Error()
 		return
 	}
 
 	m.root.walk(func(n *node) {
 		if n.isDir && expanded[n.path] {
-			_ = n.load(m.hideIgnored)
+			_ = n.load(m.hideIgnored())
 			n.expanded = true
 		}
 	})
@@ -686,8 +693,7 @@ func (m model) helpView() string {
   left/right h/l     collapse / expand
   g / G              jump to top / bottom
   enter              toggle dir / open file
-  i                  toggle gitignore hiding
-  c                  toggle changed-only (git status)
+  f                  cycle filter: default → changed only → show all
   ?                  toggle this help
   q                  quit
 
@@ -728,8 +734,8 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, errors.New("root must be a directory")
 	}
 
-	m := model{root: root, server: server, vim: vim, hideIgnored: true}
-	if err := root.load(m.hideIgnored); err != nil {
+	m := model{root: root, server: server, vim: vim}
+	if err := root.load(m.hideIgnored()); err != nil {
 		return model{}, err
 	}
 

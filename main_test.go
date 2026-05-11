@@ -454,8 +454,8 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := model{root: r, hideIgnored: true, w: 80, h: 24}
-	if err := r.load(m.hideIgnored); err != nil {
+	m := model{root: r, filter: filterDefault, w: 80, h: 24}
+	if err := r.load(m.hideIgnored()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -467,22 +467,24 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 		t.Fatalf("initial flat=%v", got)
 	}
 
-	m = send(m, "i")
-	if m.hideIgnored {
-		t.Fatal("i should disable gitignore hiding")
+	// f cycles default → changed → all; reach filterAll via two presses.
+	m = send(m, "f", "f")
+
+	if m.filter != filterAll {
+		t.Fatalf("two f presses should reach filterAll, got %v", m.filter)
 	}
 
 	if got := strings.Join(names(m.flat), ","); got != ".git,build,.gitignore,ignored.log,keep.txt" {
-		t.Fatalf("after toggle flat=%v", got)
+		t.Fatalf("showing all flat=%v", got)
 	}
 
-	m = send(m, "i")
-	if !m.hideIgnored {
-		t.Fatal("second i should enable gitignore hiding")
+	m = send(m, "f")
+	if m.filter != filterDefault {
+		t.Fatalf("third f press should return to filterDefault, got %v", m.filter)
 	}
 
 	if got := strings.Join(names(m.flat), ","); got != ".gitignore,keep.txt" {
-		t.Fatalf("after second toggle flat=%v", got)
+		t.Fatalf("back to default flat=%v", got)
 	}
 }
 
@@ -578,7 +580,7 @@ func TestChangedOnlyFilter(t *testing.T) {
 	r, _ := newNode(dir, 0, nil)
 	_ = r.load(true)
 	r.expanded = true
-	m := model{root: r, hideIgnored: true, w: 80, h: 24}
+	m := model{root: r, filter: filterDefault, w: 80, h: 24}
 	m.loadGitStatus()
 	m.rebuildFlat()
 
@@ -586,9 +588,9 @@ func TestChangedOnlyFilter(t *testing.T) {
 		t.Fatalf("initial flat=%v", got)
 	}
 
-	m = send(m, "c")
-	if !m.changedOnly {
-		t.Fatal("c should enable changed-only")
+	m = send(m, "f")
+	if !m.changedOnly() {
+		t.Fatal("f should reach changed-only from default")
 	}
 
 	got := strings.Join(names(m.flat), ",")
@@ -600,9 +602,9 @@ func TestChangedOnlyFilter(t *testing.T) {
 		t.Fatal("footer should show changed-only indicator")
 	}
 
-	m = send(m, "c")
-	if m.changedOnly {
-		t.Fatal("second c should disable changed-only")
+	m = send(m, "f", "f")
+	if m.filter != filterDefault {
+		t.Fatalf("two more f presses should return to default, got %v", m.filter)
 	}
 
 	if got := strings.Join(names(m.flat), ","); got != "a,untouched.txt" {
