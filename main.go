@@ -218,11 +218,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = true
 		case "i":
 			m.hideIgnored = !m.hideIgnored
-			if m.hideIgnored {
-				m.refreshWithMessage("hiding gitignored files")
-			} else {
-				m.refreshWithMessage("showing gitignored files")
-			}
+			m.refreshWithMessage("")
 		case "r":
 			m.refresh()
 		case "up", "k":
