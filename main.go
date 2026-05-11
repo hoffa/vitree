@@ -63,6 +63,7 @@ type model struct {
 	msg         string
 	help        bool
 	hideIgnored bool
+	changedOnly bool
 	autoRefresh bool
 	syncing     bool
 	activePath  string
@@ -250,6 +251,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "i":
 			m.hideIgnored = !m.hideIgnored
 			m.refreshWithMessage("")
+		case "c":
+			m.changedOnly = !m.changedOnly
+			m.rebuildFlat()
 		case "a":
 			m.autoRefresh = !m.autoRefresh
 			if m.autoRefresh {
@@ -427,6 +431,10 @@ func (m model) View() string {
 		right = "auto off · " + right
 	}
 
+	if m.changedOnly {
+		right = "changed only · " + right
+	}
+
 	rightStyled := ansiDim + right + ansiReset
 	rightWidth := utf8.RuneCountInString(right)
 
@@ -457,8 +465,16 @@ func (m *model) rebuildFlat() {
 	var walk func(n *node)
 
 	walk = func(n *node) {
+		if m.changedOnly && m.gitStatus[n.path] == "" {
+			return
+		}
+
 		m.flat = append(m.flat, n)
-		if n.isDir && n.expanded {
+		if n.isDir && (n.expanded || m.changedOnly) {
+			if m.changedOnly && !n.loaded {
+				_ = n.load(m.hideIgnored)
+			}
+
 			for _, c := range n.children {
 				walk(c)
 			}
@@ -736,6 +752,7 @@ func (m model) helpView() string {
   g / G              jump to top / bottom
   enter              toggle dir / open file
   i                  toggle gitignore hiding
+  c                  toggle changed-only (git status)
   a                  toggle auto-refresh (2s, on by default)
   r                  refresh tree from disk
   ?                  toggle this help

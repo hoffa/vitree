@@ -502,6 +502,90 @@ func TestGitStatus(t *testing.T) {
 	}
 }
 
+func TestChangedOnlyFilter(t *testing.T) {
+	raw := t.TempDir()
+
+	dir, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "init"},
+	} {
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable: %v: %s", err, out)
+		}
+	}
+
+	deep := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(deep, "changed.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "untouched.txt"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(t.Context(), "git", "add", "untouched.txt")
+	cmd.Dir = dir
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+
+	cmd = exec.CommandContext(t.Context(), "git",
+		"-c", "user.email=t@t", "-c", "user.name=t",
+		"commit", "-q", "-m", "add")
+	cmd.Dir = dir
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+
+	r, _ := newNode(dir, 0, nil)
+	_ = r.load(true)
+	r.expanded = true
+	m := model{root: r, hideIgnored: true, w: 80, h: 24}
+	m.loadGitStatus()
+	m.rebuildFlat()
+
+	if got := strings.Join(names(m.flat), ","); got != "a,untouched.txt" {
+		t.Fatalf("initial flat=%v", got)
+	}
+
+	m = send(m, "c")
+	if !m.changedOnly {
+		t.Fatal("c should enable changed-only")
+	}
+
+	got := strings.Join(names(m.flat), ",")
+	if got != "a,b,changed.txt" {
+		t.Fatalf("changed-only flat=%v want=a,b,changed.txt", got)
+	}
+
+	if !strings.Contains(m.View(), "changed only") {
+		t.Fatal("footer should show changed-only indicator")
+	}
+
+	m = send(m, "c")
+	if m.changedOnly {
+		t.Fatal("second c should disable changed-only")
+	}
+
+	if got := strings.Join(names(m.flat), ","); got != "a,untouched.txt" {
+		t.Fatalf("after toggle off flat=%v", got)
+	}
+}
+
 func TestGitStatusBubblesUpToDirs(t *testing.T) {
 	raw := t.TempDir()
 
