@@ -62,6 +62,7 @@ type model struct {
 	server      string
 	msg         string
 	help        bool
+	hideIgnored bool
 	syncing     bool
 	activePath  string
 	pendingPath string
@@ -97,7 +98,7 @@ func (n *node) walk(fn func(*node)) {
 	}
 }
 
-func (n *node) load() error {
+func (n *node) load(hideIgnored bool) error {
 	if !n.isDir || n.loaded {
 		return nil
 	}
@@ -106,6 +107,8 @@ func (n *node) load() error {
 	if err != nil {
 		return err
 	}
+
+	ignored := gitIgnoredEntries(n.path, entries, hideIgnored)
 
 	sort.Slice(entries, func(i, j int) bool {
 		di, dj := entries[i].IsDir(), entries[j].IsDir()
@@ -117,6 +120,10 @@ func (n *node) load() error {
 	})
 
 	for _, e := range entries {
+		if ignored[e.Name()] {
+			continue
+		}
+
 		c, err := newNode(filepath.Join(n.path, e.Name()), n.depth+1, n)
 		if err != nil {
 			continue
@@ -128,6 +135,50 @@ func (n *node) load() error {
 	n.loaded = true
 
 	return nil
+}
+
+func gitIgnoredEntries(dir string, entries []os.DirEntry, enabled bool) map[string]bool {
+	ignored := map[string]bool{}
+	if !enabled || len(entries) == 0 {
+		return ignored
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "check-ignore", "--stdin", "-z")
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return ignored
+	}
+
+	var out strings.Builder
+
+	cmd.Stdout = &out
+
+	if err := cmd.Start(); err != nil {
+		return ignored
+	}
+
+	for _, e := range entries {
+		_, _ = stdin.Write([]byte(e.Name()))
+		_, _ = stdin.Write([]byte{0})
+	}
+
+	_ = stdin.Close()
+
+	if err := cmd.Wait(); err != nil && out.Len() == 0 {
+		return ignored
+	}
+
+	for name := range strings.SplitSeq(out.String(), "\x00") {
+		if name != "" {
+			ignored[name] = true
+		}
+	}
+
+	return ignored
 }
 
 func clamp(v, lo, hi int) int {
@@ -165,6 +216,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "?":
 			m.help = true
+		case "i":
+			m.hideIgnored = !m.hideIgnored
+			if m.hideIgnored {
+				m.refreshWithMessage("hiding gitignored files")
+			} else {
+				m.refreshWithMessage("showing gitignored files")
+			}
 		case "r":
 			m.refresh()
 		case "up", "k":
@@ -219,7 +277,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 
-			if err := cur.load(); err != nil {
+			if err := cur.load(m.hideIgnored); err != nil {
 				m.msg = "error: " + err.Error()
 			}
 
@@ -239,7 +297,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cur.expanded {
 				cur.expanded = false
 			} else {
-				if err := cur.load(); err != nil {
+				if err := cur.load(m.hideIgnored); err != nil {
 					m.msg = "error: " + err.Error()
 				}
 
@@ -332,7 +390,12 @@ func (m model) View() string {
 		leftStyled = color + m.msg + ansiReset
 	}
 
-	right := "? help"
+	ignoreState := "gitignore off"
+	if m.hideIgnored {
+		ignoreState = "gitignore on"
+	}
+
+	right := ignoreState + " · ? help"
 	rightStyled := ansiDim + right + ansiReset
 
 	pad := m.w - utf8.RuneCountInString(leftRaw) - utf8.RuneCountInString(right)
@@ -433,7 +496,7 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if cur.expanded {
 				cur.expanded = false
 			} else {
-				if err := cur.load(); err != nil {
+				if err := cur.load(m.hideIgnored); err != nil {
 					m.msg = "error: " + err.Error()
 				}
 
@@ -509,6 +572,10 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 }
 
 func (m *model) refresh() {
+	m.refreshWithMessage("refreshed")
+}
+
+func (m *model) refreshWithMessage(success string) {
 	expanded := map[string]bool{}
 
 	m.root.walk(func(n *node) {
@@ -521,20 +588,20 @@ func (m *model) refresh() {
 	m.root.loaded = false
 	m.pendingPath = ""
 
-	if err := m.root.load(); err != nil {
+	if err := m.root.load(m.hideIgnored); err != nil {
 		m.msg = "error: " + err.Error()
 		return
 	}
 
 	m.root.walk(func(n *node) {
 		if n.isDir && expanded[n.path] {
-			_ = n.load()
+			_ = n.load(m.hideIgnored)
 			n.expanded = true
 		}
 	})
 	m.rebuildFlat()
 	m.loadGitStatus()
-	m.msg = "refreshed"
+	m.msg = success
 }
 
 func (m *model) loadGitStatus() {
@@ -601,6 +668,7 @@ func (m model) helpView() string {
   left/right h/l     collapse / expand
   g / G              jump to top / bottom
   enter              toggle dir / open file
+  i                  toggle gitignore hiding
   r                  refresh tree from disk
   ?                  toggle this help
   q                  quit
@@ -691,12 +759,13 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, errors.New("root must be a directory")
 	}
 
-	if err := root.load(); err != nil {
+	m := model{root: root, server: server, vim: vim, hideIgnored: true}
+	if err := root.load(m.hideIgnored); err != nil {
 		return model{}, err
 	}
 
 	root.expanded = true
-	m := model{root: root, server: server, vim: vim}
+
 	m.rebuildFlat()
 	m.loadGitStatus()
 

@@ -33,6 +33,40 @@ func mkTree(t *testing.T) string {
 	return root
 }
 
+func mkGitignoredTree(t *testing.T) string {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	root := t.TempDir()
+	for _, p := range []string{
+		"keep.txt",
+		"ignored.log",
+		"build/out.txt",
+	} {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\nbuild/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	return root
+}
+
 func names(ns []*node) []string {
 	out := make([]string, len(ns))
 	for i, n := range ns {
@@ -58,7 +92,7 @@ func TestLoadSortsDirsFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := n.load(); err != nil {
+	if err := n.load(false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,6 +110,42 @@ func TestLoadSortsDirsFirst(t *testing.T) {
 	}
 }
 
+func TestLoadHidesGitignoredWhenEnabled(t *testing.T) {
+	root := mkGitignoredTree(t)
+
+	n, err := newNode(root, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := n.load(true); err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.Join(names(n.children), ",")
+	if got != ".git,.gitignore,keep.txt" {
+		t.Fatalf("children=%v", got)
+	}
+}
+
+func TestLoadShowsGitignoredWhenDisabled(t *testing.T) {
+	root := mkGitignoredTree(t)
+
+	n, err := newNode(root, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := n.load(false); err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.Join(names(n.children), ",")
+	if got != ".git,build,.gitignore,ignored.log,keep.txt" {
+		t.Fatalf("children=%v", got)
+	}
+}
+
 func TestRebuildFlatRespectsExpansion(t *testing.T) {
 	root := mkTree(t)
 
@@ -84,7 +154,7 @@ func TestRebuildFlatRespectsExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.load(); err != nil {
+	if err := r.load(false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +179,7 @@ func TestRebuildFlatRespectsExpansion(t *testing.T) {
 		t.Fatal("a_dir not found")
 	}
 
-	if err := aDir.load(); err != nil {
+	if err := aDir.load(false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,7 +216,7 @@ func newTestModel(t *testing.T) model {
 		t.Fatal(err)
 	}
 
-	if err := r.load(); err != nil {
+	if err := r.load(false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -352,6 +422,46 @@ func TestUpdateEnterTogglesDir(t *testing.T) {
 	}
 }
 
+func TestUpdateTogglesGitignoreHiding(t *testing.T) {
+	root := mkGitignoredTree(t)
+
+	r, err := newNode(root, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{root: r, hideIgnored: true, w: 80, h: 24}
+	if err := r.load(m.hideIgnored); err != nil {
+		t.Fatal(err)
+	}
+
+	r.expanded = true
+
+	m.rebuildFlat()
+
+	if got := strings.Join(names(m.flat), ","); got != ".git,.gitignore,keep.txt" {
+		t.Fatalf("initial flat=%v", got)
+	}
+
+	m = send(m, "i")
+	if m.hideIgnored {
+		t.Fatal("i should disable gitignore hiding")
+	}
+
+	if got := strings.Join(names(m.flat), ","); got != ".git,build,.gitignore,ignored.log,keep.txt" {
+		t.Fatalf("after toggle flat=%v", got)
+	}
+
+	m = send(m, "i")
+	if !m.hideIgnored {
+		t.Fatal("second i should enable gitignore hiding")
+	}
+
+	if got := strings.Join(names(m.flat), ","); got != ".git,.gitignore,keep.txt" {
+		t.Fatalf("after second toggle flat=%v", got)
+	}
+}
+
 func TestGitStatus(t *testing.T) {
 	raw := t.TempDir()
 
@@ -377,7 +487,7 @@ func TestGitStatus(t *testing.T) {
 	}
 
 	r, _ := newNode(dir, 0, nil)
-	_ = r.load()
+	_ = r.load(false)
 	r.expanded = true
 	m := model{root: r, w: 80, h: 24}
 	m.rebuildFlat()
@@ -480,7 +590,7 @@ func TestGitColor(t *testing.T) {
 func TestLoadGitStatusOutsideRepo(t *testing.T) {
 	dir := t.TempDir()
 	r, _ := newNode(dir, 0, nil)
-	_ = r.load()
+	_ = r.load(false)
 	m := model{root: r}
 	m.loadGitStatus()
 
@@ -524,7 +634,7 @@ func TestRefreshClearsPendingSync(t *testing.T) {
 func TestRefreshHandlesLoadError(t *testing.T) {
 	dir := t.TempDir()
 	r, _ := newNode(dir, 0, nil)
-	_ = r.load()
+	_ = r.load(false)
 	r.expanded = true
 	m := model{root: r, w: 80, h: 24}
 	m.rebuildFlat()
@@ -1035,7 +1145,7 @@ func TestStaleSyncErrorDoesNotOverwriteCurrentMessage(t *testing.T) {
 func TestUpdateLoadErrorOnExpand(t *testing.T) {
 	root := mkTree(t)
 	r, _ := newNode(root, 0, nil)
-	_ = r.load()
+	_ = r.load(false)
 	r.expanded = true
 	m := model{root: r, w: 80, h: 24}
 	m.rebuildFlat()
