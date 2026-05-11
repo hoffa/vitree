@@ -2,31 +2,28 @@ name: release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  goreleaser:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           cache: true
-      - run: |
-          GOOS=linux  GOARCH=amd64 go build -o dist/vitree_linux_amd64 .
-          GOOS=linux  GOARCH=arm64 go build -o dist/vitree_linux_arm64 .
-          GOOS=darwin GOARCH=amd64 go build -o dist/vitree_darwin_amd64 .
-          GOOS=darwin GOARCH=arm64 go build -o dist/vitree_darwin_arm64 .
-      - run: |
-          git tag --force v1 HEAD
-          git push --force origin v1
-      - run: gh release create v1 --title v1 --notes "Rolling release of latest main" || true
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: gh release upload v1 dist/* --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

@@ -845,12 +845,21 @@ var runProgram = func(m tea.Model) error {
 	return err
 }
 
+var version = "dev"
+
 func run(args []string) error {
 	fs := flag.NewFlagSet("vitree", flag.ContinueOnError)
 	server := fs.String("server", "", "vim --servername to send files to (auto-detected if empty)")
 
 	vim := fs.String("vim", "vim", "vim binary to invoke (e.g. mvim, gvim, /path/to/vim)")
+	showVersion := fs.Bool("version", false, "print version and exit")
+
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *showVersion {
+		_, err := fmt.Fprintln(os.Stdout, version)
 		return err
 	}
 

@@ -1202,6 +1202,16 @@ func TestRun(t *testing.T) {
 	if err := run([]string{"-bogus"}); err == nil {
 		t.Fatal("expected flag parse error")
 	}
+
+	called = false
+
+	if err := run([]string{"-version"}); err != nil {
+		t.Fatalf("run -version: %v", err)
+	}
+
+	if called {
+		t.Fatal("runProgram should not be invoked with -version")
+	}
 }
 
 func TestNewModelLoadError(t *testing.T) {
