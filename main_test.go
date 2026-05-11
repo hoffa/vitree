@@ -257,6 +257,30 @@ func send(m model, keys ...string) model {
 	return m
 }
 
+func drain(m model, cmd tea.Cmd) model {
+	if cmd == nil {
+		return m
+	}
+
+	msg := cmd()
+
+	switch r := msg.(type) {
+	case tea.BatchMsg:
+		for _, c := range r {
+			m = drain(m, c)
+		}
+	case autoRefreshTickMsg:
+		// drop; would recurse forever
+	case nil:
+		// drop
+	default:
+		nm, next := m.Update(msg)
+		m = drain(nm.(model), next)
+	}
+
+	return m
+}
+
 func TestUpdateNavigation(t *testing.T) {
 	m := newTestModel(t)
 	if m.cursor != 0 {
@@ -702,6 +726,47 @@ func TestUpdateRefresh(t *testing.T) {
 
 	if aDir == nil || !aDir.expanded {
 		t.Fatal("refresh dropped the expanded state")
+	}
+}
+
+func TestAsyncRefreshLoadError(t *testing.T) {
+	m := newTestModel(t)
+	m.refreshing = true
+
+	bogus := *m.root
+	bogus.path = filepath.Join(m.root.path, "does-not-exist")
+	m.root = &bogus
+
+	cmd := m.asyncRefreshCmd()
+	msg := cmd().(refreshResultMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected load error")
+	}
+
+	m.applyRefresh(msg)
+
+	if m.refreshing {
+		t.Fatal("applyRefresh should clear refreshing flag on error")
+	}
+
+	if !strings.HasPrefix(m.msg, "error:") {
+		t.Fatalf("expected error msg, got %q", m.msg)
+	}
+}
+
+func TestAutoRefreshTickSkipsWhenRefreshing(t *testing.T) {
+	m := newTestModel(t)
+	m.autoRefresh = true
+	m.refreshing = true
+
+	nm, cmd := m.Update(autoRefreshTickMsg{})
+	if cmd == nil {
+		t.Fatal("tick should still reschedule while refreshing")
+	}
+
+	if !nm.(model).refreshing {
+		t.Fatal("refreshing flag should remain set")
 	}
 }
 
@@ -1373,6 +1438,8 @@ func TestAutoRefreshTickReloads(t *testing.T) {
 		t.Fatal("tick should reschedule while enabled")
 	}
 
+	m = drain(m, cmd)
+
 	if m.msg != "preserved" {
 		t.Fatalf("tick should preserve msg, got %q", m.msg)
 	}
@@ -1387,8 +1454,10 @@ func TestAutoRefreshTickPreservesPendingSync(t *testing.T) {
 	m.autoRefresh = true
 	m.pendingPath = "/queued/file"
 
-	nm, _ := m.Update(autoRefreshTickMsg{})
-	if got := nm.(model).pendingPath; got != "/queued/file" {
+	nm, cmd := m.Update(autoRefreshTickMsg{})
+	m2 := drain(nm.(model), cmd)
+
+	if got := m2.pendingPath; got != "/queued/file" {
 		t.Fatalf("tick dropped pending sync: %q", got)
 	}
 }
@@ -1404,8 +1473,8 @@ func TestAutoRefreshTickPreservesCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	nm, _ := m.Update(autoRefreshTickMsg{})
-	m = nm.(model)
+	nm, cmd := m.Update(autoRefreshTickMsg{})
+	m = drain(nm.(model), cmd)
 
 	if got := m.flat[m.cursor].path; got != want {
 		t.Fatalf("cursor drifted: want %q got %q", want, got)

@@ -65,6 +65,7 @@ type model struct {
 	hideIgnored bool
 	changedOnly bool
 	autoRefresh bool
+	refreshing  bool
 	syncing     bool
 	activePath  string
 	pendingPath string
@@ -78,6 +79,12 @@ type vimSyncDoneMsg struct {
 }
 
 type autoRefreshTickMsg struct{}
+
+type refreshResultMsg struct {
+	root      *node
+	gitStatus map[string]string
+	err       error
+}
 
 const autoRefreshInterval = 2 * time.Second
 
@@ -226,11 +233,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		savedMsg, savedPending := m.msg, m.pendingPath
-		m.refreshWithMessage("")
-		m.msg, m.pendingPath = savedMsg, savedPending
+		if m.refreshing {
+			return m, autoRefreshTick()
+		}
 
-		return m, autoRefreshTick()
+		m.refreshing = true
+
+		return m, tea.Batch(m.asyncRefreshCmd(), autoRefreshTick())
+	case refreshResultMsg:
+		m.applyRefresh(msg)
+
+		return m, nil
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
@@ -632,6 +645,76 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 
 func (m *model) refresh() {
 	m.refreshWithMessage("refreshed")
+}
+
+func (m model) asyncRefreshCmd() tea.Cmd {
+	rootPath := m.root.path
+	hideIgnored := m.hideIgnored
+
+	expanded := map[string]bool{}
+
+	m.root.walk(func(n *node) {
+		if n.isDir && n.expanded {
+			expanded[n.path] = true
+		}
+	})
+
+	return func() tea.Msg {
+		root, err := newNode(rootPath, 0, nil)
+		if err != nil {
+			return refreshResultMsg{err: err}
+		}
+
+		if err := root.load(hideIgnored); err != nil {
+			return refreshResultMsg{err: err}
+		}
+
+		root.expanded = true
+
+		root.walk(func(n *node) {
+			if n.isDir && expanded[n.path] {
+				_ = n.load(hideIgnored)
+				n.expanded = true
+			}
+		})
+
+		return refreshResultMsg{root: root, gitStatus: gitStatus(rootPath)}
+	}
+}
+
+func (m *model) applyRefresh(msg refreshResultMsg) {
+	m.refreshing = false
+
+	if msg.err != nil {
+		m.msg = "error: " + msg.err.Error()
+		return
+	}
+
+	nowExpanded := map[string]bool{}
+
+	m.root.walk(func(n *node) {
+		if n.isDir && n.expanded {
+			nowExpanded[n.path] = true
+		}
+	})
+
+	msg.root.walk(func(n *node) {
+		if n.isDir && nowExpanded[n.path] && !n.expanded {
+			_ = n.load(m.hideIgnored)
+			n.expanded = true
+		}
+	})
+
+	var cursorPath string
+	if cur := m.current(); cur != nil {
+		cursorPath = cur.path
+	}
+
+	m.root = msg.root
+	m.gitStatus = msg.gitStatus
+
+	m.rebuildFlat()
+	m.restoreCursor(cursorPath)
 }
 
 func (m *model) refreshWithMessage(success string) {
