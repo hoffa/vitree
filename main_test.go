@@ -733,6 +733,26 @@ func TestAsyncRefreshLoadError(t *testing.T) {
 	}
 }
 
+func TestGitPrimitivesErrorOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+
+	if _, err := gitRepoRoot(dir); err == nil {
+		t.Fatal("expected gitRepoRoot to fail outside a repo")
+	}
+
+	if _, err := gitPorcelain(dir); err == nil {
+		t.Fatal("expected gitPorcelain to fail outside a repo")
+	}
+
+	if _, err := gitCheckIgnore(dir, []string{"foo"}); err == nil {
+		t.Fatal("expected gitCheckIgnore to fail outside a repo")
+	}
+
+	if got, err := gitCheckIgnore(dir, nil); err != nil || len(got) != 0 {
+		t.Fatalf("gitCheckIgnore with no names should no-op: %v %v", got, err)
+	}
+}
+
 func TestRefreshWithMessageHandlesLoadError(t *testing.T) {
 	dir := t.TempDir()
 	r, _ := newNode(dir, 0, nil)

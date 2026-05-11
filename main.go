@@ -2,13 +2,11 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -28,19 +26,6 @@ const (
 	ansiYellow   = "\x1b[33m"
 	ansiBlue     = "\x1b[34m"
 )
-
-func gitColor(mark string) string {
-	switch mark {
-	case "?", "A":
-		return ansiGreen
-	case "M", "R":
-		return ansiYellow
-	case "D", "U":
-		return ansiRed
-	}
-
-	return ansiDim
-}
 
 type node struct {
 	path     string
@@ -70,11 +55,6 @@ type model struct {
 	pendingPath string
 	gitStatus   map[string]string
 	w, h        int
-}
-
-type vimSyncDoneMsg struct {
-	path string
-	err  error
 }
 
 type autoRefreshTickMsg struct{}
@@ -159,58 +139,8 @@ func (n *node) load(hideIgnored bool) error {
 	return nil
 }
 
-func gitIgnoredEntries(dir string, entries []os.DirEntry, enabled bool) map[string]bool {
-	ignored := map[string]bool{}
-	if !enabled || len(entries) == 0 {
-		return ignored
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "check-ignore", "--stdin", "-z")
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return ignored
-	}
-
-	var out strings.Builder
-
-	cmd.Stdout = &out
-
-	if err := cmd.Start(); err != nil {
-		return ignored
-	}
-
-	for _, e := range entries {
-		_, _ = stdin.Write([]byte(e.Name()))
-		_, _ = stdin.Write([]byte{0})
-	}
-
-	_ = stdin.Close()
-
-	if err := cmd.Wait(); err != nil && out.Len() == 0 {
-		return ignored
-	}
-
-	for name := range strings.SplitSeq(out.String(), "\x00") {
-		if name != "" {
-			ignored[name] = true
-		}
-	}
-
-	return ignored
-}
-
 func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
-}
-
-func syncVimCmd(vim, server, path string) tea.Cmd {
-	return func() tea.Msg {
-		return vimSyncDoneMsg{path: path, err: openInVim(vim, server, path)}
-	}
 }
 
 func (m model) Init() tea.Cmd {
@@ -750,60 +680,6 @@ func (m *model) loadGitStatus() {
 	m.gitStatus = gitStatus(m.root.path)
 }
 
-func gitStatus(dir string) map[string]string {
-	statuses := map[string]string{}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	root, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return statuses
-	}
-
-	repoRoot := strings.TrimSpace(string(root))
-
-	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain", "--untracked-files=all").Output()
-	if err != nil {
-		return statuses
-	}
-
-	priority := map[string]int{"?": 0, "R": 1, "D": 2, "A": 3, "M": 4}
-	bumpDir := func(p, mark string) {
-		if cur, ok := statuses[p]; !ok || priority[mark] > priority[cur] {
-			statuses[p] = mark
-		}
-	}
-
-	for line := range strings.SplitSeq(string(out), "\n") {
-		if len(line) < 4 {
-			continue
-		}
-
-		code, rel := line[:2], line[3:]
-		mark := strings.TrimSpace(code)
-
-		if mark == "" {
-			continue
-		}
-
-		short := string(mark[len(mark)-1])
-
-		if i := strings.Index(rel, " -> "); i >= 0 {
-			rel = rel[i+len(" -> "):]
-		}
-
-		path := filepath.Join(repoRoot, rel)
-		statuses[path] = short
-
-		for parent := filepath.Dir(path); parent != repoRoot && parent != "/" && parent != "."; parent = filepath.Dir(parent) {
-			bumpDir(parent, short)
-		}
-	}
-
-	return statuses
-}
-
 func (m model) helpView() string {
 	body := `keys
   up/down    j/k     move
@@ -822,55 +698,6 @@ vim server
 	pad := max(0, m.w-utf8.RuneCountInString(hint))
 
 	return body + "\n" + strings.Repeat("\n", gap) + strings.Repeat(" ", pad) + ansiDim + hint + ansiReset
-}
-
-func detectVimServer(vim string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, vim, "--serverlist").Output()
-	if err != nil {
-		return "", fmt.Errorf("could not run %s --serverlist: %w", vim, err)
-	}
-
-	var servers []string
-
-	for line := range strings.SplitSeq(string(out), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			servers = append(servers, line)
-		}
-	}
-
-	switch len(servers) {
-	case 0:
-		return "", errors.New("no vim server running — start vim with --servername first")
-	case 1:
-		return servers[0], nil
-	default:
-		return "", fmt.Errorf("multiple vim servers running (%s); pick one with -server", strings.Join(servers, ", "))
-	}
-}
-
-func openInVim(vim, server, path string) error {
-	if server == "" {
-		return errors.New("no vim --servername set")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, vim, "--servername", server, "--remote-silent", path)
-	out, err := cmd.CombinedOutput()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("vim server %q not responding", server)
-	}
-
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-	}
-
-	return nil
 }
 
 func newModel(vim, server, path string) (model, error) {
