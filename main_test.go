@@ -448,6 +448,10 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 		t.Fatal("i should disable gitignore hiding")
 	}
 
+	if m.msg != "" {
+		t.Fatalf("toggle should not set redundant status msg, got %q", m.msg)
+	}
+
 	if got := strings.Join(names(m.flat), ","); got != ".git,build,.gitignore,ignored.log,keep.txt" {
 		t.Fatalf("after toggle flat=%v", got)
 	}
@@ -455,6 +459,10 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 	m = send(m, "i")
 	if !m.hideIgnored {
 		t.Fatal("second i should enable gitignore hiding")
+	}
+
+	if m.msg != "" {
+		t.Fatalf("toggle should not set redundant status msg, got %q", m.msg)
 	}
 
 	if got := strings.Join(names(m.flat), ","); got != ".git,.gitignore,keep.txt" {

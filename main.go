@@ -218,11 +218,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = true
 		case "i":
 			m.hideIgnored = !m.hideIgnored
-			if m.hideIgnored {
-				m.refreshWithMessage("hiding gitignored files")
-			} else {
-				m.refreshWithMessage("showing gitignored files")
-			}
+			m.reloadTree()
 		case "r":
 			m.refresh()
 		case "up", "k":
@@ -572,10 +568,14 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 }
 
 func (m *model) refresh() {
-	m.refreshWithMessage("refreshed")
+	m.reloadTree()
+
+	if m.msg == "" {
+		m.msg = "refreshed"
+	}
 }
 
-func (m *model) refreshWithMessage(success string) {
+func (m *model) reloadTree() {
 	expanded := map[string]bool{}
 
 	m.root.walk(func(n *node) {
@@ -601,7 +601,7 @@ func (m *model) refreshWithMessage(success string) {
 	})
 	m.rebuildFlat()
 	m.loadGitStatus()
-	m.msg = success
+	m.msg = ""
 }
 
 func (m *model) loadGitStatus() {
