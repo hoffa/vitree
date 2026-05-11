@@ -921,7 +921,12 @@ func TestNewModel(t *testing.T) {
 func TestInit(t *testing.T) {
 	m := newTestModel(t)
 	if cmd := m.Init(); cmd != nil {
-		t.Fatal("Init should return nil")
+		t.Fatal("Init should return nil when auto-refresh off")
+	}
+
+	m.autoRefresh = true
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("Init should return tick cmd when auto-refresh on")
 	}
 }
 
@@ -1283,6 +1288,36 @@ func TestAutoRefreshTickReloads(t *testing.T) {
 	}
 }
 
+func TestAutoRefreshTickPreservesPendingSync(t *testing.T) {
+	m := newTestModel(t)
+	m.autoRefresh = true
+	m.pendingPath = "/queued/file"
+
+	nm, _ := m.Update(autoRefreshTickMsg{})
+	if got := nm.(model).pendingPath; got != "/queued/file" {
+		t.Fatalf("tick dropped pending sync: %q", got)
+	}
+}
+
+func TestAutoRefreshTickPreservesCursor(t *testing.T) {
+	m := newTestModel(t)
+	m.autoRefresh = true
+	m.cursor = 2
+
+	want := m.flat[m.cursor].path
+
+	if err := os.WriteFile(filepath.Join(m.root.path, "0_first.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nm, _ := m.Update(autoRefreshTickMsg{})
+	m = nm.(model)
+
+	if got := m.flat[m.cursor].path; got != want {
+		t.Fatalf("cursor drifted: want %q got %q", want, got)
+	}
+}
+
 func TestAutoRefreshTickWhenDisabled(t *testing.T) {
 	m := newTestModel(t)
 
@@ -1292,13 +1327,23 @@ func TestAutoRefreshTickWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestViewShowsAutoRefreshIndicator(t *testing.T) {
+func TestViewShowsAutoRefreshOffIndicator(t *testing.T) {
+	m := newTestModel(t)
+	m.autoRefresh = false
+	m.w = 200
+
+	if !strings.Contains(m.View(), "auto off") {
+		t.Fatal("view should show indicator when auto-refresh disabled")
+	}
+}
+
+func TestViewHidesAutoRefreshWhenOn(t *testing.T) {
 	m := newTestModel(t)
 	m.autoRefresh = true
 	m.w = 200
 
-	if !strings.Contains(m.View(), "auto") {
-		t.Fatal("view should mark auto-refresh as active")
+	if strings.Contains(m.View(), "auto") {
+		t.Fatal("default-on auto-refresh should not show indicator")
 	}
 }
 

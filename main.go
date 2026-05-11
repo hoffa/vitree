@@ -202,7 +202,13 @@ func syncVimCmd(vim, server, path string) tea.Cmd {
 	}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd {
+	if m.autoRefresh {
+		return autoRefreshTick()
+	}
+
+	return nil
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -215,9 +221,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		saved := m.msg
+		savedMsg, savedPending := m.msg, m.pendingPath
 		m.refreshWithMessage("")
-		m.msg = saved
+		m.msg, m.pendingPath = savedMsg, savedPending
 
 		return m, autoRefreshTick()
 	case tea.MouseMsg:
@@ -413,8 +419,8 @@ func (m model) View() string {
 		right = "gitignore off · " + right
 	}
 
-	if m.autoRefresh {
-		right = "auto · " + right
+	if !m.autoRefresh {
+		right = "auto off · " + right
 	}
 
 	rightStyled := ansiDim + right + ansiReset
@@ -617,6 +623,11 @@ func (m *model) refreshWithMessage(success string) {
 		}
 	})
 
+	var cursorPath string
+	if cur := m.current(); cur != nil {
+		cursorPath = cur.path
+	}
+
 	m.root.children = nil
 	m.root.loaded = false
 	m.pendingPath = ""
@@ -633,8 +644,27 @@ func (m *model) refreshWithMessage(success string) {
 		}
 	})
 	m.rebuildFlat()
+	m.restoreCursor(cursorPath)
 	m.loadGitStatus()
 	m.msg = success
+}
+
+func (m *model) restoreCursor(path string) {
+	if path == "" {
+		return
+	}
+
+	for i, n := range m.flat {
+		if n.path == path {
+			m.cursor = i
+			m.ensureVisible()
+
+			return
+		}
+	}
+
+	m.cursor = min(m.cursor, max(0, len(m.flat)-1))
+	m.ensureVisible()
 }
 
 func (m *model) loadGitStatus() {
@@ -702,7 +732,7 @@ func (m model) helpView() string {
   g / G              jump to top / bottom
   enter              toggle dir / open file
   i                  toggle gitignore hiding
-  a                  toggle auto-refresh (2s)
+  a                  toggle auto-refresh (2s, on by default)
   r                  refresh tree from disk
   ?                  toggle this help
   q                  quit
@@ -793,7 +823,7 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, errors.New("root must be a directory")
 	}
 
-	m := model{root: root, server: server, vim: vim, hideIgnored: true}
+	m := model{root: root, server: server, vim: vim, hideIgnored: true, autoRefresh: true}
 	if err := root.load(m.hideIgnored); err != nil {
 		return model{}, err
 	}
