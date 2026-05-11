@@ -64,7 +64,6 @@ type model struct {
 	help        bool
 	hideIgnored bool
 	changedOnly bool
-	autoRefresh bool
 	refreshing  bool
 	syncing     bool
 	activePath  string
@@ -215,11 +214,7 @@ func syncVimCmd(vim, server, path string) tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	if m.autoRefresh {
-		return autoRefreshTick()
-	}
-
-	return nil
+	return autoRefreshTick()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -229,10 +224,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case vimSyncDoneMsg:
 		return m, m.finishSync(msg)
 	case autoRefreshTickMsg:
-		if !m.autoRefresh {
-			return m, nil
-		}
-
 		if m.refreshing {
 			return m, autoRefreshTick()
 		}
@@ -267,13 +258,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.changedOnly = !m.changedOnly
 			m.rebuildFlat()
-		case "a":
-			m.autoRefresh = !m.autoRefresh
-			if m.autoRefresh {
-				return m, autoRefreshTick()
-			}
-		case "r":
-			m.refresh()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -438,10 +422,6 @@ func (m model) View() string {
 	right := "? help"
 	if !m.hideIgnored {
 		right = "gitignore off · " + right
-	}
-
-	if !m.autoRefresh {
-		right = "auto off · " + right
 	}
 
 	if m.changedOnly {
@@ -643,10 +623,6 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 	return m.requestSync(pending)
 }
 
-func (m *model) refresh() {
-	m.refreshWithMessage("refreshed")
-}
-
 func (m model) asyncRefreshCmd() tea.Cmd {
 	rootPath := m.root.path
 	hideIgnored := m.hideIgnored
@@ -836,8 +812,6 @@ func (m model) helpView() string {
   enter              toggle dir / open file
   i                  toggle gitignore hiding
   c                  toggle changed-only (git status)
-  a                  toggle auto-refresh (2s, on by default)
-  r                  refresh tree from disk
   ?                  toggle this help
   q                  quit
 
@@ -927,7 +901,7 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, errors.New("root must be a directory")
 	}
 
-	m := model{root: root, server: server, vim: vim, hideIgnored: true, autoRefresh: true}
+	m := model{root: root, server: server, vim: vim, hideIgnored: true}
 	if err := root.load(m.hideIgnored); err != nil {
 		return model{}, err
 	}

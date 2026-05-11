@@ -707,28 +707,6 @@ func TestLoadGitStatusOutsideRepo(t *testing.T) {
 	}
 }
 
-func TestUpdateRefresh(t *testing.T) {
-	m := newTestModel(t)
-
-	m = send(m, "l", "r") // expand a_dir, refresh
-	if m.msg != "refreshed" {
-		t.Fatalf("msg=%q", m.msg)
-	}
-	// expanded state preserved after refresh
-	var aDir *node
-
-	for _, n := range m.flat {
-		if n.name == "a_dir" {
-			aDir = n
-			break
-		}
-	}
-
-	if aDir == nil || !aDir.expanded {
-		t.Fatal("refresh dropped the expanded state")
-	}
-}
-
 func TestAsyncRefreshLoadError(t *testing.T) {
 	m := newTestModel(t)
 	m.refreshing = true
@@ -755,32 +733,7 @@ func TestAsyncRefreshLoadError(t *testing.T) {
 	}
 }
 
-func TestAutoRefreshTickSkipsWhenRefreshing(t *testing.T) {
-	m := newTestModel(t)
-	m.autoRefresh = true
-	m.refreshing = true
-
-	nm, cmd := m.Update(autoRefreshTickMsg{})
-	if cmd == nil {
-		t.Fatal("tick should still reschedule while refreshing")
-	}
-
-	if !nm.(model).refreshing {
-		t.Fatal("refreshing flag should remain set")
-	}
-}
-
-func TestRefreshClearsPendingSync(t *testing.T) {
-	m := newTestModel(t)
-	m.pendingPath = "/some/stale/path"
-	m.refresh()
-
-	if m.pendingPath != "" {
-		t.Fatalf("refresh did not clear pendingPath: %q", m.pendingPath)
-	}
-}
-
-func TestRefreshHandlesLoadError(t *testing.T) {
+func TestRefreshWithMessageHandlesLoadError(t *testing.T) {
 	dir := t.TempDir()
 	r, _ := newNode(dir, 0, nil)
 	_ = r.load(false)
@@ -794,10 +747,24 @@ func TestRefreshHandlesLoadError(t *testing.T) {
 
 	defer func() { _ = os.Chmod(dir, 0o755) }()
 
-	m.refresh()
+	m.refreshWithMessage("ok")
 
-	if m.msg == "refreshed" {
-		t.Fatal("expected error msg, got refreshed")
+	if !strings.HasPrefix(m.msg, "error:") {
+		t.Fatalf("expected error msg, got %q", m.msg)
+	}
+}
+
+func TestAutoRefreshTickSkipsWhenRefreshing(t *testing.T) {
+	m := newTestModel(t)
+	m.refreshing = true
+
+	nm, cmd := m.Update(autoRefreshTickMsg{})
+	if cmd == nil {
+		t.Fatal("tick should still reschedule while refreshing")
+	}
+
+	if !nm.(model).refreshing {
+		t.Fatal("refreshing flag should remain set")
 	}
 }
 
@@ -1069,13 +1036,8 @@ func TestNewModel(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	m := newTestModel(t)
-	if cmd := m.Init(); cmd != nil {
-		t.Fatal("Init should return nil when auto-refresh off")
-	}
-
-	m.autoRefresh = true
 	if cmd := m.Init(); cmd == nil {
-		t.Fatal("Init should return tick cmd when auto-refresh on")
+		t.Fatal("Init should return tick cmd")
 	}
 }
 
@@ -1391,38 +1353,8 @@ func TestTruncateLeft(t *testing.T) {
 	}
 }
 
-func TestAutoRefreshToggle(t *testing.T) {
-	m := newTestModel(t)
-	if m.autoRefresh {
-		t.Fatal("auto-refresh should default off")
-	}
-
-	nm, cmd := m.Update(key("a"))
-
-	m = nm.(model)
-	if !m.autoRefresh {
-		t.Fatal("a should enable auto-refresh")
-	}
-
-	if cmd == nil {
-		t.Fatal("enabling should return a tick cmd")
-	}
-
-	nm, cmd = m.Update(key("a"))
-
-	m = nm.(model)
-	if m.autoRefresh {
-		t.Fatal("second a should disable")
-	}
-
-	if cmd != nil {
-		t.Fatal("disabling should not return a cmd")
-	}
-}
-
 func TestAutoRefreshTickReloads(t *testing.T) {
 	m := newTestModel(t)
-	m.autoRefresh = true
 	m.msg = "preserved"
 
 	extra := filepath.Join(m.root.path, "new_file.txt")
@@ -1435,7 +1367,7 @@ func TestAutoRefreshTickReloads(t *testing.T) {
 	m = nm.(model)
 
 	if cmd == nil {
-		t.Fatal("tick should reschedule while enabled")
+		t.Fatal("tick should reschedule")
 	}
 
 	m = drain(m, cmd)
@@ -1451,7 +1383,6 @@ func TestAutoRefreshTickReloads(t *testing.T) {
 
 func TestAutoRefreshTickPreservesPendingSync(t *testing.T) {
 	m := newTestModel(t)
-	m.autoRefresh = true
 	m.pendingPath = "/queued/file"
 
 	nm, cmd := m.Update(autoRefreshTickMsg{})
@@ -1464,7 +1395,6 @@ func TestAutoRefreshTickPreservesPendingSync(t *testing.T) {
 
 func TestAutoRefreshTickPreservesCursor(t *testing.T) {
 	m := newTestModel(t)
-	m.autoRefresh = true
 	m.cursor = 2
 
 	want := m.flat[m.cursor].path
@@ -1478,35 +1408,6 @@ func TestAutoRefreshTickPreservesCursor(t *testing.T) {
 
 	if got := m.flat[m.cursor].path; got != want {
 		t.Fatalf("cursor drifted: want %q got %q", want, got)
-	}
-}
-
-func TestAutoRefreshTickWhenDisabled(t *testing.T) {
-	m := newTestModel(t)
-
-	_, cmd := m.Update(autoRefreshTickMsg{})
-	if cmd != nil {
-		t.Fatal("tick while disabled should not reschedule")
-	}
-}
-
-func TestViewShowsAutoRefreshOffIndicator(t *testing.T) {
-	m := newTestModel(t)
-	m.autoRefresh = false
-	m.w = 200
-
-	if !strings.Contains(m.View(), "auto off") {
-		t.Fatal("view should show indicator when auto-refresh disabled")
-	}
-}
-
-func TestViewHidesAutoRefreshWhenOn(t *testing.T) {
-	m := newTestModel(t)
-	m.autoRefresh = true
-	m.w = 200
-
-	if strings.Contains(m.View(), "auto") {
-		t.Fatal("default-on auto-refresh should not show indicator")
 	}
 }
 
