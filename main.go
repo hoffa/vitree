@@ -135,6 +135,10 @@ func (n *node) load(hideIgnored bool) error {
 			continue
 		}
 
+		if hideIgnored && e.Name() == ".git" && e.IsDir() {
+			continue
+		}
+
 		c, err := newNode(filepath.Join(n.path, e.Name()), n.depth+1, n)
 		if err != nil {
 			continue

@@ -123,7 +123,7 @@ func TestLoadHidesGitignoredWhenEnabled(t *testing.T) {
 	}
 
 	got := strings.Join(names(n.children), ",")
-	if got != ".git,.gitignore,keep.txt" {
+	if got != ".gitignore,keep.txt" {
 		t.Fatalf("children=%v", got)
 	}
 }
@@ -439,7 +439,7 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 
 	m.rebuildFlat()
 
-	if got := strings.Join(names(m.flat), ","); got != ".git,.gitignore,keep.txt" {
+	if got := strings.Join(names(m.flat), ","); got != ".gitignore,keep.txt" {
 		t.Fatalf("initial flat=%v", got)
 	}
 
@@ -457,7 +457,7 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 		t.Fatal("second i should enable gitignore hiding")
 	}
 
-	if got := strings.Join(names(m.flat), ","); got != ".git,.gitignore,keep.txt" {
+	if got := strings.Join(names(m.flat), ","); got != ".gitignore,keep.txt" {
 		t.Fatalf("after second toggle flat=%v", got)
 	}
 }
