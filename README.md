@@ -36,4 +36,4 @@ In another terminal, run:
 vitree
 ```
 
-Press `?` inside vitree for help.
+Files matched by `.gitignore` are hidden by default. Press `i` to toggle them, or `?` for the full key list.
