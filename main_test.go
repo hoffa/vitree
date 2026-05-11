@@ -1213,6 +1213,105 @@ func TestNewModelLoadError(t *testing.T) {
 	}
 }
 
+func TestTruncateLeft(t *testing.T) {
+	if got := truncateLeft("abc", 5); got != "abc" {
+		t.Fatalf("short string changed: %q", got)
+	}
+
+	if got := truncateLeft("abcdef", 4); got != "…def" {
+		t.Fatalf("truncated wrong: %q", got)
+	}
+
+	if got := truncateLeft("abc", 0); got != "" {
+		t.Fatalf("zero width should empty: %q", got)
+	}
+}
+
+func TestAutoRefreshToggle(t *testing.T) {
+	m := newTestModel(t)
+	if m.autoRefresh {
+		t.Fatal("auto-refresh should default off")
+	}
+
+	nm, cmd := m.Update(key("a"))
+
+	m = nm.(model)
+	if !m.autoRefresh {
+		t.Fatal("a should enable auto-refresh")
+	}
+
+	if cmd == nil {
+		t.Fatal("enabling should return a tick cmd")
+	}
+
+	nm, cmd = m.Update(key("a"))
+
+	m = nm.(model)
+	if m.autoRefresh {
+		t.Fatal("second a should disable")
+	}
+
+	if cmd != nil {
+		t.Fatal("disabling should not return a cmd")
+	}
+}
+
+func TestAutoRefreshTickReloads(t *testing.T) {
+	m := newTestModel(t)
+	m.autoRefresh = true
+	m.msg = "preserved"
+
+	extra := filepath.Join(m.root.path, "new_file.txt")
+	if err := os.WriteFile(extra, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nm, cmd := m.Update(autoRefreshTickMsg{})
+
+	m = nm.(model)
+
+	if cmd == nil {
+		t.Fatal("tick should reschedule while enabled")
+	}
+
+	if m.msg != "preserved" {
+		t.Fatalf("tick should preserve msg, got %q", m.msg)
+	}
+
+	if !strings.Contains(strings.Join(names(m.flat), ","), "new_file.txt") {
+		t.Fatal("tick should pick up new file")
+	}
+}
+
+func TestAutoRefreshTickWhenDisabled(t *testing.T) {
+	m := newTestModel(t)
+
+	_, cmd := m.Update(autoRefreshTickMsg{})
+	if cmd != nil {
+		t.Fatal("tick while disabled should not reschedule")
+	}
+}
+
+func TestViewShowsAutoRefreshIndicator(t *testing.T) {
+	m := newTestModel(t)
+	m.autoRefresh = true
+	m.w = 200
+
+	if !strings.Contains(m.View(), "auto") {
+		t.Fatal("view should mark auto-refresh as active")
+	}
+}
+
+func TestViewTruncatesLongPath(t *testing.T) {
+	m := newTestModel(t)
+	m.root.path = strings.Repeat("a", 200)
+
+	out := m.View()
+	if !strings.Contains(out, "? help") {
+		t.Fatal("long path should still leave room for help hint")
+	}
+}
+
 func TestWindowSizeMsg(t *testing.T) {
 	m := newTestModel(t)
 

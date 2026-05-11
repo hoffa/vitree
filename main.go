@@ -63,6 +63,7 @@ type model struct {
 	msg         string
 	help        bool
 	hideIgnored bool
+	autoRefresh bool
 	syncing     bool
 	activePath  string
 	pendingPath string
@@ -73,6 +74,16 @@ type model struct {
 type vimSyncDoneMsg struct {
 	path string
 	err  error
+}
+
+type autoRefreshTickMsg struct{}
+
+const autoRefreshInterval = 2 * time.Second
+
+func autoRefreshTick() tea.Cmd {
+	return tea.Tick(autoRefreshInterval, func(time.Time) tea.Msg {
+		return autoRefreshTickMsg{}
+	})
 }
 
 func newNode(path string, depth int, parent *node) (*node, error) {
@@ -199,6 +210,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 	case vimSyncDoneMsg:
 		return m, m.finishSync(msg)
+	case autoRefreshTickMsg:
+		if !m.autoRefresh {
+			return m, nil
+		}
+
+		saved := m.msg
+		m.refreshWithMessage("")
+		m.msg = saved
+
+		return m, autoRefreshTick()
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
@@ -219,6 +240,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "i":
 			m.hideIgnored = !m.hideIgnored
 			m.refreshWithMessage("")
+		case "a":
+			m.autoRefresh = !m.autoRefresh
+			if m.autoRefresh {
+				return m, autoRefreshTick()
+			}
 		case "r":
 			m.refresh()
 		case "up", "k":
@@ -373,17 +399,13 @@ func (m model) View() string {
 	b.WriteString(strings.Repeat("\n", gap))
 
 	leftRaw := m.root.path + "/"
+	color := ansiDim
 
-	leftStyled := ansiDim + leftRaw + ansiReset
 	if m.msg != "" {
 		leftRaw = m.msg
-
-		color := ansiDim
 		if strings.HasPrefix(m.msg, "error:") {
 			color = ansiError
 		}
-
-		leftStyled = color + m.msg + ansiReset
 	}
 
 	ignoreState := "gitignore off"
@@ -392,16 +414,32 @@ func (m model) View() string {
 	}
 
 	right := ignoreState + " · ? help"
-	rightStyled := ansiDim + right + ansiReset
-
-	pad := m.w - utf8.RuneCountInString(leftRaw) - utf8.RuneCountInString(right)
-	if pad < 1 {
-		b.WriteString(leftStyled)
-	} else {
-		b.WriteString(leftStyled + strings.Repeat(" ", pad) + rightStyled)
+	if m.autoRefresh {
+		right = "auto · " + right
 	}
 
+	rightStyled := ansiDim + right + ansiReset
+	rightWidth := utf8.RuneCountInString(right)
+
+	leftRaw = truncateLeft(leftRaw, max(0, m.w-rightWidth-1))
+	leftStyled := color + leftRaw + ansiReset
+	pad := max(1, m.w-utf8.RuneCountInString(leftRaw)-rightWidth)
+	b.WriteString(leftStyled + strings.Repeat(" ", pad) + rightStyled)
+
 	return b.String()
+}
+
+func truncateLeft(s string, maxWidth int) string {
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+
+	if maxWidth < 1 {
+		return ""
+	}
+
+	return "…" + string(runes[len(runes)-maxWidth+1:])
 }
 
 func (m *model) rebuildFlat() {
@@ -665,6 +703,7 @@ func (m model) helpView() string {
   g / G              jump to top / bottom
   enter              toggle dir / open file
   i                  toggle gitignore hiding
+  a                  toggle auto-refresh (2s)
   r                  refresh tree from disk
   ?                  toggle this help
   q                  quit
