@@ -408,12 +408,11 @@ func (m model) View() string {
 		}
 	}
 
-	ignoreState := "gitignore off"
-	if m.hideIgnored {
-		ignoreState = "gitignore on"
+	right := "? help"
+	if !m.hideIgnored {
+		right = "gitignore off · " + right
 	}
 
-	right := ignoreState + " · ? help"
 	if m.autoRefresh {
 		right = "auto · " + right
 	}
