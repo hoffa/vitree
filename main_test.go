@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -849,22 +848,54 @@ func TestGitPrimitivesErrorOutsideRepo(t *testing.T) {
 	}
 }
 
-func TestApplyRefreshSurfacesError(t *testing.T) {
-	dir := t.TempDir()
-	r, _ := newNode(dir, 0, nil)
+func TestApplyRefreshCarriesExpansion(t *testing.T) {
+	root := mkTree(t)
+
+	r, _ := newNode(root, 0, nil)
 	_ = r.load(false)
 	r.expanded = true
+
+	var sub *node
+
+	for _, c := range r.children {
+		if c.isDir {
+			_ = c.load(false)
+			c.expanded = true
+			sub = c
+
+			break
+		}
+	}
+
+	if sub == nil {
+		t.Fatal("need a dir in tree")
+	}
+
 	m := model{root: r, w: 80, h: 24, refreshing: true}
 	m.rebuildFlat()
 
-	m.applyRefresh(refreshResultMsg{err: errors.New("boom")})
-
-	if !strings.HasPrefix(m.msg, "error:") {
-		t.Fatalf("expected error msg, got %q", m.msg)
+	fresh, err := buildTree(root, nil, true)
+	if err != nil {
+		t.Fatal(err)
 	}
 
+	m.applyRefresh(refreshResultMsg{root: fresh})
+
 	if m.refreshing {
-		t.Fatal("refreshing should be cleared after error")
+		t.Fatal("refreshing flag should clear")
+	}
+
+	var newSub *node
+
+	for _, c := range m.root.children {
+		if c.path == sub.path {
+			newSub = c
+			break
+		}
+	}
+
+	if newSub == nil || !newSub.expanded {
+		t.Fatal("previously-expanded dir should remain expanded after refresh")
 	}
 }
 
