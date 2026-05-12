@@ -190,7 +190,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = true
 		case "f":
 			m.filter = (m.filter + 1) % 3
-			m.refreshWithMessage("")
+			m.msg = ""
+
+			if m.refreshing {
+				return m, nil
+			}
+
+			m.refreshing = true
+
+			return m, m.asyncRefreshCmd()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -713,29 +721,6 @@ func (m *model) applyRefresh(msg refreshResultMsg) {
 
 	m.rebuildFlat()
 	m.restoreCursor(cursorPath)
-}
-
-func (m *model) refreshWithMessage(success string) {
-	expanded := m.expandedPaths()
-
-	var cursorPath string
-	if cur := m.current(); cur != nil {
-		cursorPath = cur.path
-	}
-
-	root, err := buildTree(m.root.path, expanded, m.hideIgnored())
-	if err != nil {
-		m.msg = "error: " + err.Error()
-		return
-	}
-
-	m.root = root
-	m.pendingPath = ""
-
-	m.rebuildFlat()
-	m.restoreCursor(cursorPath)
-	m.loadGitStatus()
-	m.msg = success
 }
 
 func (m *model) restoreCursor(path string) {

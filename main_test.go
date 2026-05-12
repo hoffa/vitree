@@ -341,6 +341,15 @@ func send(m model, keys ...string) model {
 	return m
 }
 
+func sendDrain(m model, keys ...string) model {
+	for _, k := range keys {
+		nm, cmd := m.Update(key(k))
+		m = drain(nm.(model), cmd)
+	}
+
+	return m
+}
+
 func drain(m model, cmd tea.Cmd) model {
 	if cmd == nil {
 		return m
@@ -552,7 +561,7 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 	}
 
 	// f cycles default → changed → all; reach filterAll via two presses.
-	m = send(m, "f", "f")
+	m = sendDrain(m, "f", "f")
 
 	if m.filter != filterAll {
 		t.Fatalf("two f presses should reach filterAll, got %v", m.filter)
@@ -562,7 +571,7 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 		t.Fatalf("showing all flat=%v", got)
 	}
 
-	m = send(m, "f")
+	m = sendDrain(m, "f")
 	if m.filter != filterDefault {
 		t.Fatalf("third f press should return to filterDefault, got %v", m.filter)
 	}
@@ -672,7 +681,7 @@ func TestChangedOnlyFilter(t *testing.T) {
 		t.Fatalf("initial flat=%v", got)
 	}
 
-	m = send(m, "f")
+	m = sendDrain(m, "f")
 	if !m.changedOnly() {
 		t.Fatal("f should reach changed-only from default")
 	}
@@ -686,7 +695,7 @@ func TestChangedOnlyFilter(t *testing.T) {
 		t.Fatal("footer should show changed-only indicator")
 	}
 
-	m = send(m, "f", "f")
+	m = sendDrain(m, "f", "f")
 	if m.filter != filterDefault {
 		t.Fatalf("two more f presses should return to default, got %v", m.filter)
 	}
@@ -839,24 +848,54 @@ func TestGitPrimitivesErrorOutsideRepo(t *testing.T) {
 	}
 }
 
-func TestRefreshWithMessageHandlesLoadError(t *testing.T) {
-	dir := t.TempDir()
-	r, _ := newNode(dir, 0, nil)
+func TestApplyRefreshCarriesExpansion(t *testing.T) {
+	root := mkTree(t)
+
+	r, _ := newNode(root, 0, nil)
 	_ = r.load(false)
 	r.expanded = true
-	m := model{root: r, w: 80, h: 24}
-	m.rebuildFlat()
 
-	if err := os.Chmod(dir, 0); err != nil {
-		t.Skip(err)
+	var sub *node
+
+	for _, c := range r.children {
+		if c.isDir {
+			_ = c.load(false)
+			c.expanded = true
+			sub = c
+
+			break
+		}
 	}
 
-	defer func() { _ = os.Chmod(dir, 0o755) }()
+	if sub == nil {
+		t.Fatal("need a dir in tree")
+	}
 
-	m.refreshWithMessage("ok")
+	m := model{root: r, w: 80, h: 24, refreshing: true}
+	m.rebuildFlat()
 
-	if !strings.HasPrefix(m.msg, "error:") {
-		t.Fatalf("expected error msg, got %q", m.msg)
+	fresh, err := buildTree(root, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m.applyRefresh(refreshResultMsg{root: fresh})
+
+	if m.refreshing {
+		t.Fatal("refreshing flag should clear")
+	}
+
+	var newSub *node
+
+	for _, c := range m.root.children {
+		if c.path == sub.path {
+			newSub = c
+			break
+		}
+	}
+
+	if newSub == nil || !newSub.expanded {
+		t.Fatal("previously-expanded dir should remain expanded after refresh")
 	}
 }
 
