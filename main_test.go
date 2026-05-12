@@ -854,8 +854,8 @@ func TestAsyncRefreshLoadError(t *testing.T) {
 		t.Fatal("applyRefresh should clear refreshing flag on error")
 	}
 
-	if !strings.HasPrefix(m.msg, "error:") {
-		t.Fatalf("expected error msg, got %q", m.msg)
+	if !strings.HasPrefix(m.err, "error:") {
+		t.Fatalf("expected error msg, got %q", m.err)
 	}
 }
 
@@ -1027,7 +1027,7 @@ func TestHelpCtrlCQuits(t *testing.T) {
 func TestViewBottomMsgOverridesHelp(t *testing.T) {
 	m := newTestModel(t)
 	m.cursor = 0
-	m.msg = "error: boom"
+	m.err = "error: boom"
 
 	out := m.View()
 	if !strings.Contains(out, "error: boom") {
@@ -1093,11 +1093,11 @@ exit 2
 
 func TestSyncCurrentOnDirIsNoop(t *testing.T) {
 	m := newTestModel(t)
-	m.msg = ""
+	m.err = ""
 	m.syncCurrent() // cursor on a dir
 
-	if m.msg != "" {
-		t.Fatalf("expected no msg for dir, got %q", m.msg)
+	if m.err != "" {
+		t.Fatalf("expected no msg for dir, got %q", m.err)
 	}
 }
 
@@ -1113,7 +1113,7 @@ func TestSyncCurrentOnFile(t *testing.T) {
 		}
 	}
 
-	m.msg = "stale"
+	m.err = "stale"
 
 	cmd := m.syncCurrent()
 	if cmd == nil {
@@ -1127,8 +1127,8 @@ func TestSyncCurrentOnFile(t *testing.T) {
 		t.Fatal("unexpected follow-up command")
 	}
 
-	if m.msg != "" {
-		t.Fatalf("expected msg cleared on success, got %q", m.msg)
+	if m.err != "" {
+		t.Fatalf("expected msg cleared on success, got %q", m.err)
 	}
 
 	m.vim = "/no/such/binary"
@@ -1136,8 +1136,8 @@ func TestSyncCurrentOnFile(t *testing.T) {
 	nm, _ = m.Update(cmd())
 
 	m = nm.(model)
-	if !strings.HasPrefix(m.msg, "error:") {
-		t.Fatalf("expected error msg, got %q", m.msg)
+	if !strings.HasPrefix(m.err, "error:") {
+		t.Fatalf("expected error msg, got %q", m.err)
 	}
 }
 
@@ -1221,7 +1221,7 @@ func TestViewBottomMsg(t *testing.T) {
 	m := newTestModel(t)
 	m.cursor = 0
 
-	m.msg = "hello"
+	m.err = "hello"
 	if !strings.Contains(m.View(), "hello") {
 		t.Fatal("msg missing")
 	}
@@ -1266,7 +1266,7 @@ func TestUpdateEnterOnFile(t *testing.T) {
 		}
 	}
 
-	m.msg = "stale"
+	m.err = "stale"
 	nm, cmd := m.Update(key("enter"))
 	m = nm.(model)
 
@@ -1277,21 +1277,21 @@ func TestUpdateEnterOnFile(t *testing.T) {
 	nm, _ = m.Update(cmd())
 
 	m = nm.(model)
-	if m.msg != "" {
-		t.Fatalf("expected msg cleared, got %q", m.msg)
+	if m.err != "" {
+		t.Fatalf("expected msg cleared, got %q", m.err)
 	}
 }
 
 func TestSyncCurrentOnDirReturnsNoCommand(t *testing.T) {
 	m := newTestModel(t)
 
-	m.msg = ""
+	m.err = ""
 	if cmd := m.syncCurrent(); cmd != nil {
 		t.Fatal("dir selection should not return sync command")
 	}
 
-	if m.msg != "" {
-		t.Fatalf("expected no msg for dir, got %q", m.msg)
+	if m.err != "" {
+		t.Fatalf("expected no msg for dir, got %q", m.err)
 	}
 }
 
@@ -1342,8 +1342,8 @@ func TestCoalescesVimSyncs(t *testing.T) {
 	nm, next = m.Update(next())
 
 	m = nm.(model)
-	if next != nil || m.syncing || m.pendingPath != "" || m.msg != "" {
-		t.Fatalf("expected sync queue to drain cleanly: syncing=%v pending=%q msg=%q next=%v", m.syncing, m.pendingPath, m.msg, next)
+	if next != nil || m.syncing || m.pendingPath != "" || m.err != "" {
+		t.Fatalf("expected sync queue to drain cleanly: syncing=%v pending=%q msg=%q next=%v", m.syncing, m.pendingPath, m.err, next)
 	}
 }
 
@@ -1422,7 +1422,7 @@ func TestStaleSyncErrorDoesNotOverwriteCurrentMessage(t *testing.T) {
 	m.server = "EDIT"
 	m = send(m, "j", "j") // a_file.md
 	stale := m.current().path
-	m.msg = "keep"
+	m.err = "keep"
 	m.cursor++ // z_file.txt
 	nm, next := m.Update(vimSyncDoneMsg{path: stale, err: os.ErrNotExist})
 	m = nm.(model)
@@ -1431,8 +1431,8 @@ func TestStaleSyncErrorDoesNotOverwriteCurrentMessage(t *testing.T) {
 		t.Fatal("unexpected follow-up command")
 	}
 
-	if m.msg != "keep" {
-		t.Fatalf("stale error changed msg: %q", m.msg)
+	if m.err != "keep" {
+		t.Fatalf("stale error changed msg: %q", m.err)
 	}
 }
 
@@ -1458,7 +1458,7 @@ func TestUpdateLoadErrorOnExpand(t *testing.T) {
 	}
 
 	m = send(m, "l")
-	if m.msg == "" {
+	if m.err == "" {
 		t.Fatal("expected error msg from failed load")
 	}
 }
@@ -1533,7 +1533,7 @@ func TestTruncateLeft(t *testing.T) {
 
 func TestAutoRefreshTickReloads(t *testing.T) {
 	m := newTestModel(t)
-	m.msg = "preserved"
+	m.err = "preserved"
 
 	extra := filepath.Join(m.root.path, "new_file.txt")
 	if err := os.WriteFile(extra, []byte("x"), 0o644); err != nil {
@@ -1550,8 +1550,8 @@ func TestAutoRefreshTickReloads(t *testing.T) {
 
 	m = drain(m, cmd)
 
-	if m.msg != "preserved" {
-		t.Fatalf("tick should preserve msg, got %q", m.msg)
+	if m.err != "preserved" {
+		t.Fatalf("tick should preserve msg, got %q", m.err)
 	}
 
 	if !strings.Contains(strings.Join(names(m.flat), ","), "new_file.txt") {
