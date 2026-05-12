@@ -341,11 +341,21 @@ func (m model) View() string {
 			raw += " " + gitMark
 		}
 
+		truncated := false
+
+		if m.w > 0 && lipgloss.Width(raw) > m.w {
+			raw = truncateRight(raw, m.w)
+			truncated = true
+		}
+
 		var line string
 
-		if i == m.cursor {
+		switch {
+		case i == m.cursor:
 			line = selectedStyle.Width(m.w).Render(raw)
-		} else {
+		case truncated:
+			line = raw
+		default:
 			styled := indent
 			if n.isDir {
 				styled += blueStyle.Render(marker + n.name + suffix)
@@ -398,7 +408,7 @@ func (m model) View() string {
 	return b.String()
 }
 
-func (m model) hideIgnored() bool { return m.filter != filterAll }
+func (m model) hideIgnored() bool { return m.gitRoot != "" && m.filter != filterAll }
 func (m model) changedOnly() bool { return m.filter == filterChanged }
 
 func truncateLeft(s string, maxWidth int) string {
@@ -412,6 +422,19 @@ func truncateLeft(s string, maxWidth int) string {
 	}
 
 	return "…" + string(runes[len(runes)-maxWidth+1:])
+}
+
+func truncateRight(s string, maxWidth int) string {
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+
+	if maxWidth < 1 {
+		return ""
+	}
+
+	return string(runes[:maxWidth-1]) + "…"
 }
 
 func (m *model) rebuildFlat() {
@@ -714,7 +737,6 @@ func (m *model) applyRefresh(msg refreshResultMsg) {
 
 	msg.root.walk(func(n *node) {
 		if n.isDir && nowExpanded[n.path] && !n.expanded {
-			_ = n.load(m.hideIgnored())
 			n.expanded = true
 		}
 	})

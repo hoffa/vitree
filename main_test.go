@@ -578,7 +578,7 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := model{root: r, filter: filterDefault, w: 80, h: 24}
+	m := model{root: r, filter: filterDefault, w: 80, h: 24, gitRoot: root}
 	if err := r.load(m.hideIgnored()); err != nil {
 		t.Fatal(err)
 	}
@@ -1528,6 +1528,46 @@ func TestTruncateLeft(t *testing.T) {
 
 	if got := truncateLeft("abc", 0); got != "" {
 		t.Fatalf("zero width should empty: %q", got)
+	}
+}
+
+func TestTruncateRight(t *testing.T) {
+	if got := truncateRight("abc", 5); got != "abc" {
+		t.Fatalf("short string changed: %q", got)
+	}
+
+	if got := truncateRight("abcdef", 4); got != "abc…" {
+		t.Fatalf("truncated wrong: %q", got)
+	}
+
+	if got := truncateRight("abc", 0); got != "" {
+		t.Fatalf("zero width should empty: %q", got)
+	}
+}
+
+func TestViewTruncatesLongLines(t *testing.T) {
+	dir := t.TempDir()
+
+	longName := strings.Repeat("x", 100) + ".txt"
+	if err := os.WriteFile(filepath.Join(dir, longName), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := newNode(dir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = r.load(false)
+	r.expanded = true
+
+	m := model{root: r, w: 20, h: 5}
+	m.rebuildFlat()
+
+	for line := range strings.SplitSeq(strings.TrimRight(m.View(), "\n"), "\n") {
+		if w := lipgloss.Width(line); w > 20 {
+			t.Fatalf("line wider than terminal (%d > 20): %q", w, line)
+		}
 	}
 }
 

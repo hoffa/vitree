@@ -43,4 +43,4 @@ In another terminal, run:
 vitree
 ```
 
-Files matched by `.gitignore` are hidden by default. Press `i` to toggle them, or `?` for the full key list.
+Files matched by `.gitignore` are hidden by default. Press `f` to cycle filter modes (default → changed only → show all), or `?` for the full key list.
