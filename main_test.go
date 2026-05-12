@@ -170,7 +170,7 @@ func TestBuildTreeBatchesIgnored(t *testing.T) {
 
 	expanded := map[string]bool{root: true, filepath.Join(root, "src"): true}
 
-	r, err := buildTree(root, expanded, true)
+	r, err := buildTree(root, expanded, expanded, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestBuildTreeTolerantOfSubdirReadError(t *testing.T) {
 
 	defer func() { _ = os.Chmod(bad, 0o755) }()
 
-	r, err := buildTree(root, map[string]bool{bad: true}, false)
+	r, err := buildTree(root, map[string]bool{bad: true}, map[string]bool{bad: true}, false)
 	if err != nil {
 		t.Fatalf("root should still build: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestBuildTreeReturnsRootReadError(t *testing.T) {
 
 	defer func() { _ = os.Chmod(dir, 0o755) }()
 
-	if _, err := buildTree(dir, nil, false); err == nil {
+	if _, err := buildTree(dir, nil, nil, false); err == nil {
 		t.Fatal("expected error when root unreadable")
 	}
 }
@@ -874,7 +874,7 @@ func TestApplyRefreshCarriesExpansion(t *testing.T) {
 	m := model{root: r, w: 80, h: 24, refreshing: true}
 	m.rebuildFlat()
 
-	fresh, err := buildTree(root, nil, true)
+	fresh, err := buildTree(root, nil, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

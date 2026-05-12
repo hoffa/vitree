@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -569,15 +570,31 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 func (m model) asyncRefreshCmd() tea.Cmd {
 	rootPath := m.root.path
 	hideIgnored := m.hideIgnored()
+	changedOnly := m.changedOnly()
 	expanded := m.expandedPaths()
 
 	return func() tea.Msg {
-		root, err := buildTree(rootPath, expanded, hideIgnored)
+		gs := gitStatus(rootPath)
+
+		load := expanded
+
+		if changedOnly {
+			load = maps.Clone(expanded)
+			if load == nil {
+				load = map[string]bool{}
+			}
+
+			for p := range gs {
+				load[p] = true
+			}
+		}
+
+		root, err := buildTree(rootPath, load, expanded, hideIgnored)
 		if err != nil {
 			return refreshResultMsg{err: err}
 		}
 
-		return refreshResultMsg{root: root, gitStatus: gitStatus(rootPath)}
+		return refreshResultMsg{root: root, gitStatus: gs}
 	}
 }
 
@@ -596,7 +613,7 @@ func (m model) expandedPaths() map[string]bool {
 // buildTree reads the directory tree at rootPath, including any subdirs in
 // `expanded`, and returns it with one batched `git check-ignore` call instead
 // of forking once per directory.
-func buildTree(rootPath string, expanded map[string]bool, hideIgnored bool) (*node, error) {
+func buildTree(rootPath string, load, expanded map[string]bool, hideIgnored bool) (*node, error) {
 	root, err := newNode(rootPath, 0, nil)
 	if err != nil {
 		return nil, err
@@ -609,7 +626,7 @@ func buildTree(rootPath string, expanded map[string]bool, hideIgnored bool) (*no
 
 	scanned := map[string][]os.DirEntry{rootPath: rootEntries}
 
-	for path := range expanded {
+	for path := range load {
 		if path == rootPath {
 			continue
 		}
@@ -674,9 +691,15 @@ func buildTree(rootPath string, expanded map[string]bool, hideIgnored bool) (*no
 		n.loaded = true
 
 		for _, c := range n.children {
-			if c.isDir && expanded[c.path] {
-				c.expanded = true
+			if !c.isDir {
+				continue
+			}
 
+			if expanded[c.path] {
+				c.expanded = true
+			}
+
+			if _, ok := scanned[c.path]; ok {
 				build(c)
 			}
 		}
