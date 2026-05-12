@@ -11,3 +11,11 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/hoffa/vitree
     description: Tiny Go TUI that browses the current directory and forwards files to vim
+    url:
+      verified: github.com/hoffa/vitree
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/vitree"]
+          end
