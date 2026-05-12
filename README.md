@@ -21,14 +21,6 @@ go install github.com/hoffa/vitree@latest
 
 Or download a [prebuilt binary](https://github.com/hoffa/vitree/releases/latest).
 
-> [!NOTE]
->
-> You also need Vim compiled with `+clientserver`. On macOS, you can install Vim using:
->
-> ```bash
-> brew install vim
-> ```
-
 ## Usage
 
 Start Vim with a server name:
@@ -36,6 +28,14 @@ Start Vim with a server name:
 ```sh
 vim --servername vim
 ```
+
+> [!NOTE]
+>
+> You need Vim compiled with `+clientserver`:
+>
+> ```bash
+> brew install vim
+> ```
 
 In another terminal, run:
 
