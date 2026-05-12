@@ -408,10 +408,6 @@ func (m *model) rebuildFlat() {
 
 		m.flat = append(m.flat, n)
 		if n.isDir && (n.expanded || m.changedOnly()) {
-			if m.changedOnly() && !n.loaded {
-				_ = n.load(m.hideIgnored())
-			}
-
 			for _, c := range n.children {
 				walk(c)
 			}
@@ -580,10 +576,6 @@ func (m model) asyncRefreshCmd() tea.Cmd {
 
 		if changedOnly {
 			load = maps.Clone(expanded)
-			if load == nil {
-				load = map[string]bool{}
-			}
-
 			for p := range gs {
 				load[p] = true
 			}

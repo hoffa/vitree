@@ -230,6 +230,37 @@ func TestBuildTreeReturnsRootReadError(t *testing.T) {
 	}
 }
 
+func TestBuildTreeLoadsWithoutExpanding(t *testing.T) {
+	root := mkTree(t)
+	sub := filepath.Join(root, "a_dir")
+
+	r, err := buildTree(root, map[string]bool{sub: true}, map[string]bool{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var subNode *node
+
+	for _, c := range r.children {
+		if c.path == sub {
+			subNode = c
+			break
+		}
+	}
+
+	if subNode == nil {
+		t.Fatal("a_dir missing from root")
+	}
+
+	if subNode.expanded {
+		t.Fatal("a_dir should not be marked expanded")
+	}
+
+	if !subNode.loaded || len(subNode.children) == 0 {
+		t.Fatal("a_dir should be pre-loaded with children")
+	}
+}
+
 func TestRebuildFlatRespectsExpansion(t *testing.T) {
 	root := mkTree(t)
 
