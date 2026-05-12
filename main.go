@@ -20,6 +20,7 @@ const (
 	ansiReset    = "\x1b[0m"
 	ansiSelected = "\x1b[7m"
 	ansiDim      = "\x1b[2m"
+	ansiBold     = "\x1b[1m"
 	ansiError    = "\x1b[31m"
 	ansiRed      = "\x1b[31m"
 	ansiGreen    = "\x1b[32m"
@@ -298,9 +299,9 @@ func (m model) View() string {
 
 		if n.isDir {
 			if n.expanded {
-				marker = "- "
+				marker = "▼ "
 			} else {
-				marker = "+ "
+				marker = "▶ "
 			}
 
 			suffix = "/"
@@ -323,7 +324,7 @@ func (m model) View() string {
 		} else {
 			styled := indent
 			if n.isDir {
-				styled += ansiDim + marker + ansiReset + ansiBlue + n.name + suffix + ansiReset
+				styled += ansiBlue + marker + n.name + suffix + ansiReset
 			} else {
 				styled += marker + n.name + suffix
 			}
@@ -763,16 +764,16 @@ func (m *model) loadGitStatus() {
 }
 
 func (m model) helpView() string {
-	body := `keys
-  up/down    j/k     move
-  left/right h/l     collapse / expand
-  g / G              jump to top / bottom
-  enter              toggle dir / open file
+	body := ansiBold + "keys" + ansiReset + `
+  ↑ ↓        j k     move
+  ← →        h l     collapse · expand
+  g G                jump to top · bottom
+  ⏎                  toggle dir · open file
   f                  cycle filter: default → changed only → show all
   ?                  toggle this help
   q                  quit
 
-vim server
+` + ansiBold + "vim server" + ansiReset + `
   ` + m.server
 	hint := "press any key to close"
 	gap := max(0, m.h-strings.Count(body, "\n")-2)
