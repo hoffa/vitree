@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -120,26 +119,19 @@ func gitCheckIgnore(dir string, names []string) (map[string]bool, error) {
 	return ignored, nil
 }
 
-func gitIgnoredEntries(dir string, entries []os.DirEntry, enabled bool) map[string]bool {
-	if !enabled {
-		return map[string]bool{}
-	}
-
-	names := make([]string, len(entries))
-	for i, e := range entries {
-		names[i] = e.Name()
-	}
-
-	ignored, _ := gitCheckIgnore(dir, names)
-
-	return ignored
-}
-
 func gitStatus(dir string) map[string]string {
-	statuses := map[string]string{}
-
 	repoRoot, err := gitRepoRoot(dir)
 	if err != nil {
+		return map[string]string{}
+	}
+
+	return gitStatusFromRoot(repoRoot)
+}
+
+func gitStatusFromRoot(repoRoot string) map[string]string {
+	statuses := map[string]string{}
+
+	if repoRoot == "" {
 		return statuses
 	}
 

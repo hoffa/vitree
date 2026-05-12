@@ -45,7 +45,7 @@ type model struct {
 	scroll      int
 	vim         string
 	server      string
-	msg         string
+	err         string
 	help        bool
 	filter      filterMode
 	refreshing  bool
@@ -53,6 +53,7 @@ type model struct {
 	activePath  string
 	pendingPath string
 	gitStatus   map[string]string
+	gitRoot     string
 	w, h        int
 }
 
@@ -113,8 +114,24 @@ func (n *node) load(hideIgnored bool) error {
 		return err
 	}
 
-	ignored := gitIgnoredEntries(n.path, entries, hideIgnored)
+	var ignored map[string]bool
 
+	if hideIgnored {
+		abs := make([]string, len(entries))
+		for i, e := range entries {
+			abs[i] = filepath.Join(n.path, e.Name())
+		}
+
+		ignored, _ = gitCheckIgnore(n.path, abs)
+	}
+
+	n.children = childrenFrom(n, entries, ignored, hideIgnored)
+	n.loaded = true
+
+	return nil
+}
+
+func childrenFrom(parent *node, entries []os.DirEntry, ignored map[string]bool, hideIgnored bool) []*node {
 	sort.Slice(entries, func(i, j int) bool {
 		di, dj := entries[i].IsDir(), entries[j].IsDir()
 		if di != dj {
@@ -124,8 +141,11 @@ func (n *node) load(hideIgnored bool) error {
 		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
 	})
 
+	var out []*node
+
 	for _, e := range entries {
-		if ignored[e.Name()] {
+		abs := filepath.Join(parent.path, e.Name())
+		if ignored[abs] {
 			continue
 		}
 
@@ -133,17 +153,15 @@ func (n *node) load(hideIgnored bool) error {
 			continue
 		}
 
-		c, err := newNode(filepath.Join(n.path, e.Name()), n.depth+1, n)
+		c, err := newNode(abs, parent.depth+1, parent)
 		if err != nil {
 			continue
 		}
 
-		n.children = append(n.children, c)
+		out = append(out, c)
 	}
 
-	n.loaded = true
-
-	return nil
+	return out
 }
 
 func clamp(v, lo, hi int) int {
@@ -191,7 +209,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = true
 		case "f":
 			m.filter = (m.filter + 1) % 3
-			m.msg = ""
+			m.err = ""
 
 			if m.refreshing {
 				return m, nil
@@ -253,7 +271,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if err := cur.load(m.hideIgnored()); err != nil {
-				m.msg = "error: " + err.Error()
+				m.err = "error: " + err.Error()
 			}
 
 			cur.expanded = true
@@ -273,7 +291,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cur.expanded = false
 			} else {
 				if err := cur.load(m.hideIgnored()); err != nil {
-					m.msg = "error: " + err.Error()
+					m.err = "error: " + err.Error()
 				}
 
 				cur.expanded = true
@@ -353,9 +371,9 @@ func (m model) View() string {
 	leftRaw := m.root.path + "/"
 	leftStyle := dimStyle
 
-	if m.msg != "" {
-		leftRaw = m.msg
-		if strings.HasPrefix(m.msg, "error:") {
+	if m.err != "" {
+		leftRaw = m.err
+		if strings.HasPrefix(m.err, "error:") {
 			leftStyle = redStyle
 		}
 	}
@@ -489,7 +507,7 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				cur.expanded = false
 			} else {
 				if err := cur.load(m.hideIgnored()); err != nil {
-					m.msg = "error: " + err.Error()
+					m.err = "error: " + err.Error()
 				}
 
 				cur.expanded = true
@@ -547,9 +565,9 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 
 	if cur := m.current(); cur != nil && cur.path == msg.path {
 		if msg.err != nil {
-			m.msg = "error: " + msg.err.Error()
+			m.err = "error: " + msg.err.Error()
 		} else {
-			m.msg = ""
+			m.err = ""
 		}
 	}
 
@@ -565,12 +583,13 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 
 func (m model) asyncRefreshCmd() tea.Cmd {
 	rootPath := m.root.path
+	gitRoot := m.gitRoot
 	hideIgnored := m.hideIgnored()
 	changedOnly := m.changedOnly()
 	expanded := m.expandedPaths()
 
 	return func() tea.Msg {
-		gs := gitStatus(rootPath)
+		gs := gitStatusFromRoot(gitRoot)
 
 		load := expanded
 
@@ -653,33 +672,7 @@ func buildTree(rootPath string, load, expanded map[string]bool, hideIgnored bool
 			return
 		}
 
-		sort.Slice(entries, func(i, j int) bool {
-			di, dj := entries[i].IsDir(), entries[j].IsDir()
-			if di != dj {
-				return di
-			}
-
-			return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
-		})
-
-		for _, e := range entries {
-			abs := filepath.Join(n.path, e.Name())
-			if ignored[abs] {
-				continue
-			}
-
-			if hideIgnored && e.Name() == ".git" && e.IsDir() {
-				continue
-			}
-
-			c, err := newNode(abs, n.depth+1, n)
-			if err != nil {
-				continue
-			}
-
-			n.children = append(n.children, c)
-		}
-
+		n.children = childrenFrom(n, entries, ignored, hideIgnored)
 		n.loaded = true
 
 		for _, c := range n.children {
@@ -707,7 +700,7 @@ func (m *model) applyRefresh(msg refreshResultMsg) {
 	m.refreshing = false
 
 	if msg.err != nil {
-		m.msg = "error: " + msg.err.Error()
+		m.err = "error: " + msg.err.Error()
 		return
 	}
 
@@ -757,7 +750,11 @@ func (m *model) restoreCursor(path string) {
 }
 
 func (m *model) loadGitStatus() {
-	m.gitStatus = gitStatus(m.root.path)
+	if m.gitRoot == "" {
+		m.gitRoot, _ = gitRepoRoot(m.root.path)
+	}
+
+	m.gitStatus = gitStatusFromRoot(m.gitRoot)
 }
 
 func (m model) helpView() string {
@@ -807,7 +804,9 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, errors.New("root must be a directory")
 	}
 
-	m := model{root: root, server: server, vim: vim}
+	gitRoot, _ := gitRepoRoot(abs)
+
+	m := model{root: root, server: server, vim: vim, gitRoot: gitRoot}
 	if err := root.load(m.hideIgnored()); err != nil {
 		return model{}, err
 	}
