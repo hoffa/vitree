@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 type porcelainLine struct {
@@ -14,17 +16,17 @@ type porcelainLine struct {
 	path string
 }
 
-func gitColor(mark string) string {
+func gitColor(mark string) lipgloss.Style {
 	switch mark {
 	case "?", "A":
-		return ansiGreen
+		return greenStyle
 	case "M", "R":
-		return ansiYellow
+		return yellowStyle
 	case "D", "U":
-		return ansiRed
+		return redStyle
 	}
 
-	return ansiDim
+	return dimStyle
 }
 
 func gitRepoRoot(dir string) (string, error) {
