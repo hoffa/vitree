@@ -11,21 +11,19 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
-const (
-	ansiReset    = "\x1b[0m"
-	ansiSelected = "\x1b[7m"
-	ansiDim      = "\x1b[2m"
-	ansiBold     = "\x1b[1m"
-	ansiError    = "\x1b[31m"
-	ansiRed      = "\x1b[31m"
-	ansiGreen    = "\x1b[32m"
-	ansiYellow   = "\x1b[33m"
-	ansiBlue     = "\x1b[34m"
+var (
+	selectedStyle = lipgloss.NewStyle().Reverse(true)
+	dimStyle      = lipgloss.NewStyle().Faint(true)
+	boldStyle     = lipgloss.NewStyle().Bold(true)
+	redStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	greenStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	yellowStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	blueStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 )
 
 type node struct {
@@ -319,18 +317,17 @@ func (m model) View() string {
 		var line string
 
 		if i == m.cursor {
-			pad := max(0, m.w-utf8.RuneCountInString(raw))
-			line = ansiSelected + raw + strings.Repeat(" ", pad) + ansiReset
+			line = selectedStyle.Width(m.w).Render(raw)
 		} else {
 			styled := indent
 			if n.isDir {
-				styled += ansiBlue + marker + n.name + suffix + ansiReset
+				styled += blueStyle.Render(marker + n.name + suffix)
 			} else {
 				styled += marker + n.name + suffix
 			}
 
 			if gitMark != "" {
-				styled += " " + gitColor(gitMark) + gitMark + ansiReset
+				styled += " " + gitColor(gitMark).Render(gitMark)
 			}
 
 			line = styled
@@ -345,12 +342,12 @@ func (m model) View() string {
 	b.WriteString(strings.Repeat("\n", gap))
 
 	leftRaw := m.root.path + "/"
-	color := ansiDim
+	leftStyle := dimStyle
 
 	if m.msg != "" {
 		leftRaw = m.msg
 		if strings.HasPrefix(m.msg, "error:") {
-			color = ansiError
+			leftStyle = redStyle
 		}
 	}
 
@@ -363,12 +360,12 @@ func (m model) View() string {
 		right = "showing all · " + right
 	}
 
-	rightStyled := ansiDim + right + ansiReset
-	rightWidth := utf8.RuneCountInString(right)
+	rightStyled := dimStyle.Render(right)
+	rightWidth := lipgloss.Width(rightStyled)
 
 	leftRaw = truncateLeft(leftRaw, max(0, m.w-rightWidth-1))
-	leftStyled := color + leftRaw + ansiReset
-	pad := max(1, m.w-utf8.RuneCountInString(leftRaw)-rightWidth)
+	leftStyled := leftStyle.Render(leftRaw)
+	pad := max(1, m.w-lipgloss.Width(leftStyled)-rightWidth)
 	b.WriteString(leftStyled + strings.Repeat(" ", pad) + rightStyled)
 
 	return b.String()
@@ -764,7 +761,7 @@ func (m *model) loadGitStatus() {
 }
 
 func (m model) helpView() string {
-	body := ansiBold + "keys" + ansiReset + `
+	body := boldStyle.Render("keys") + `
   ↑ ↓        j k     move
   ← →        h l     collapse · expand
   g G                jump to top · bottom
@@ -773,13 +770,13 @@ func (m model) helpView() string {
   ?                  toggle this help
   q                  quit
 
-` + ansiBold + "vim server" + ansiReset + `
+` + boldStyle.Render("vim server") + `
   ` + m.server
-	hint := "press any key to close"
+	hint := dimStyle.Render("press any key to close")
 	gap := max(0, m.h-strings.Count(body, "\n")-2)
-	pad := max(0, m.w-utf8.RuneCountInString(hint))
+	pad := max(0, m.w-lipgloss.Width(hint))
 
-	return body + "\n" + strings.Repeat("\n", gap) + strings.Repeat(" ", pad) + ansiDim + hint + ansiReset
+	return body + "\n" + strings.Repeat("\n", gap) + strings.Repeat(" ", pad) + hint
 }
 
 func newModel(vim, server, path string) (model, error) {

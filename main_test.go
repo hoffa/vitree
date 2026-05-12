@@ -8,7 +8,14 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
+
+func TestMain(m *testing.M) {
+	lipgloss.SetColorProfile(termenv.ANSI)
+	os.Exit(m.Run())
+}
 
 func mkTree(t *testing.T) string {
 	t.Helper()
@@ -761,15 +768,15 @@ func TestGitStatusRename(t *testing.T) {
 }
 
 func TestGitColor(t *testing.T) {
-	cases := map[string]string{
-		"?": ansiGreen, "A": ansiGreen,
-		"M": ansiYellow, "R": ansiYellow,
-		"D": ansiRed, "U": ansiRed,
-		"X": ansiDim,
+	cases := map[string]lipgloss.Style{
+		"?": greenStyle, "A": greenStyle,
+		"M": yellowStyle, "R": yellowStyle,
+		"D": redStyle, "U": redStyle,
+		"X": dimStyle,
 	}
 	for mark, want := range cases {
-		if got := gitColor(mark); got != want {
-			t.Errorf("gitColor(%q)=%q want %q", mark, got, want)
+		if got := gitColor(mark).Render("x"); got != want.Render("x") {
+			t.Errorf("gitColor(%q)=%q want %q", mark, got, want.Render("x"))
 		}
 	}
 }
@@ -1170,8 +1177,10 @@ func TestViewWithExpandedDir(t *testing.T) {
 	m := newTestModel(t)
 
 	m = send(m, "l", "j") // expand a_dir, move off it
-	if !strings.Contains(m.View(), "\x1b[34m▼ a_dir/") {
-		t.Fatal("expanded dir marker missing")
+
+	want := blueStyle.Render("▼ a_dir/")
+	if !strings.Contains(m.View(), want) {
+		t.Fatalf("expanded dir marker missing: want %q in view", want)
 	}
 }
 
