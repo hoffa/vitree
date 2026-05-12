@@ -1536,7 +1536,7 @@ func TestTruncateRight(t *testing.T) {
 		t.Fatalf("short string changed: %q", got)
 	}
 
-	if got := truncateRight("abcdef", 4); got != "abc…" {
+	if got := truncateRight("abcdef", 4); got != "abcd" {
 		t.Fatalf("truncated wrong: %q", got)
 	}
 

@@ -430,11 +430,7 @@ func truncateRight(s string, maxWidth int) string {
 		return s
 	}
 
-	if maxWidth < 1 {
-		return ""
-	}
-
-	return string(runes[:maxWidth-1]) + "…"
+	return string(runes[:max(0, maxWidth)])
 }
 
 func (m *model) rebuildFlat() {
