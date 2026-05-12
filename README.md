@@ -10,6 +10,12 @@ Vim file browser in a separate process.
 ## Install
 
 ```sh
+brew install hoffa/tap/vitree
+```
+
+Or with Go:
+
+```sh
 go install github.com/hoffa/vitree@latest
 ```
 
