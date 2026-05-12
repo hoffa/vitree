@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -341,6 +342,15 @@ func send(m model, keys ...string) model {
 	return m
 }
 
+func sendDrain(m model, keys ...string) model {
+	for _, k := range keys {
+		nm, cmd := m.Update(key(k))
+		m = drain(nm.(model), cmd)
+	}
+
+	return m
+}
+
 func drain(m model, cmd tea.Cmd) model {
 	if cmd == nil {
 		return m
@@ -552,7 +562,7 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 	}
 
 	// f cycles default → changed → all; reach filterAll via two presses.
-	m = send(m, "f", "f")
+	m = sendDrain(m, "f", "f")
 
 	if m.filter != filterAll {
 		t.Fatalf("two f presses should reach filterAll, got %v", m.filter)
@@ -562,7 +572,7 @@ func TestUpdateTogglesGitignoreHiding(t *testing.T) {
 		t.Fatalf("showing all flat=%v", got)
 	}
 
-	m = send(m, "f")
+	m = sendDrain(m, "f")
 	if m.filter != filterDefault {
 		t.Fatalf("third f press should return to filterDefault, got %v", m.filter)
 	}
@@ -672,7 +682,7 @@ func TestChangedOnlyFilter(t *testing.T) {
 		t.Fatalf("initial flat=%v", got)
 	}
 
-	m = send(m, "f")
+	m = sendDrain(m, "f")
 	if !m.changedOnly() {
 		t.Fatal("f should reach changed-only from default")
 	}
@@ -686,7 +696,7 @@ func TestChangedOnlyFilter(t *testing.T) {
 		t.Fatal("footer should show changed-only indicator")
 	}
 
-	m = send(m, "f", "f")
+	m = sendDrain(m, "f", "f")
 	if m.filter != filterDefault {
 		t.Fatalf("two more f presses should return to default, got %v", m.filter)
 	}
@@ -839,24 +849,22 @@ func TestGitPrimitivesErrorOutsideRepo(t *testing.T) {
 	}
 }
 
-func TestRefreshWithMessageHandlesLoadError(t *testing.T) {
+func TestApplyRefreshSurfacesError(t *testing.T) {
 	dir := t.TempDir()
 	r, _ := newNode(dir, 0, nil)
 	_ = r.load(false)
 	r.expanded = true
-	m := model{root: r, w: 80, h: 24}
+	m := model{root: r, w: 80, h: 24, refreshing: true}
 	m.rebuildFlat()
 
-	if err := os.Chmod(dir, 0); err != nil {
-		t.Skip(err)
-	}
-
-	defer func() { _ = os.Chmod(dir, 0o755) }()
-
-	m.refreshWithMessage("ok")
+	m.applyRefresh(refreshResultMsg{err: errors.New("boom")})
 
 	if !strings.HasPrefix(m.msg, "error:") {
 		t.Fatalf("expected error msg, got %q", m.msg)
+	}
+
+	if m.refreshing {
+		t.Fatal("refreshing should be cleared after error")
 	}
 }
 
