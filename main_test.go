@@ -146,6 +146,83 @@ func TestLoadShowsGitignoredWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestBuildTreeBatchesIgnored(t *testing.T) {
+	root := mkGitignoredTree(t)
+
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "src", "a.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "src", "junk.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	expanded := map[string]bool{root: true, filepath.Join(root, "src"): true}
+
+	r, err := buildTree(root, expanded, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(names(r.children), ","); got != "src,.gitignore,keep.txt" {
+		t.Fatalf("root children=%q", got)
+	}
+
+	var srcNode *node
+
+	for _, c := range r.children {
+		if c.name == "src" {
+			srcNode = c
+			break
+		}
+	}
+
+	if srcNode == nil || !srcNode.expanded {
+		t.Fatal("src should be expanded")
+	}
+
+	if got := strings.Join(names(srcNode.children), ","); got != "a.go" {
+		t.Fatalf("src children=%q (junk.log should be ignored)", got)
+	}
+}
+
+func TestBuildTreeTolerantOfSubdirReadError(t *testing.T) {
+	root := mkTree(t)
+	bad := filepath.Join(root, "a_dir")
+
+	if err := os.Chmod(bad, 0); err != nil {
+		t.Skip(err)
+	}
+
+	defer func() { _ = os.Chmod(bad, 0o755) }()
+
+	r, err := buildTree(root, map[string]bool{bad: true}, false)
+	if err != nil {
+		t.Fatalf("root should still build: %v", err)
+	}
+
+	if len(r.children) == 0 {
+		t.Fatal("root children expected")
+	}
+}
+
+func TestBuildTreeReturnsRootReadError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Skip(err)
+	}
+
+	defer func() { _ = os.Chmod(dir, 0o755) }()
+
+	if _, err := buildTree(dir, nil, false); err == nil {
+		t.Fatal("expected error when root unreadable")
+	}
+}
+
 func TestRebuildFlatRespectsExpansion(t *testing.T) {
 	root := mkTree(t)
 

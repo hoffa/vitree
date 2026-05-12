@@ -563,7 +563,19 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 func (m model) asyncRefreshCmd() tea.Cmd {
 	rootPath := m.root.path
 	hideIgnored := m.hideIgnored()
+	expanded := m.expandedPaths()
 
+	return func() tea.Msg {
+		root, err := buildTree(rootPath, expanded, hideIgnored)
+		if err != nil {
+			return refreshResultMsg{err: err}
+		}
+
+		return refreshResultMsg{root: root, gitStatus: gitStatus(rootPath)}
+	}
+}
+
+func (m model) expandedPaths() map[string]bool {
 	expanded := map[string]bool{}
 
 	m.root.walk(func(n *node) {
@@ -572,27 +584,102 @@ func (m model) asyncRefreshCmd() tea.Cmd {
 		}
 	})
 
-	return func() tea.Msg {
-		root, err := newNode(rootPath, 0, nil)
+	return expanded
+}
+
+// buildTree reads the directory tree at rootPath, including any subdirs in
+// `expanded`, and returns it with one batched `git check-ignore` call instead
+// of forking once per directory.
+func buildTree(rootPath string, expanded map[string]bool, hideIgnored bool) (*node, error) {
+	root, err := newNode(rootPath, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	rootEntries, err := os.ReadDir(rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	scanned := map[string][]os.DirEntry{rootPath: rootEntries}
+
+	for path := range expanded {
+		if path == rootPath {
+			continue
+		}
+
+		entries, err := os.ReadDir(path)
 		if err != nil {
-			return refreshResultMsg{err: err}
+			continue
 		}
 
-		if err := root.load(hideIgnored); err != nil {
-			return refreshResultMsg{err: err}
-		}
+		scanned[path] = entries
+	}
 
-		root.expanded = true
+	var ignored map[string]bool
 
-		root.walk(func(n *node) {
-			if n.isDir && expanded[n.path] {
-				_ = n.load(hideIgnored)
-				n.expanded = true
+	if hideIgnored {
+		var all []string
+
+		for dirPath, entries := range scanned {
+			for _, e := range entries {
+				all = append(all, filepath.Join(dirPath, e.Name()))
 			}
+		}
+
+		ignored, _ = gitCheckIgnore(rootPath, all)
+	}
+
+	var build func(*node)
+
+	build = func(n *node) {
+		entries, ok := scanned[n.path]
+		if !ok {
+			return
+		}
+
+		sort.Slice(entries, func(i, j int) bool {
+			di, dj := entries[i].IsDir(), entries[j].IsDir()
+			if di != dj {
+				return di
+			}
+
+			return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
 		})
 
-		return refreshResultMsg{root: root, gitStatus: gitStatus(rootPath)}
+		for _, e := range entries {
+			abs := filepath.Join(n.path, e.Name())
+			if ignored[abs] {
+				continue
+			}
+
+			if hideIgnored && e.Name() == ".git" && e.IsDir() {
+				continue
+			}
+
+			c, err := newNode(abs, n.depth+1, n)
+			if err != nil {
+				continue
+			}
+
+			n.children = append(n.children, c)
+		}
+
+		n.loaded = true
+
+		for _, c := range n.children {
+			if c.isDir && expanded[c.path] {
+				c.expanded = true
+
+				build(c)
+			}
+		}
 	}
+
+	root.expanded = true
+	build(root)
+
+	return root, nil
 }
 
 func (m *model) applyRefresh(msg refreshResultMsg) {
@@ -631,34 +718,22 @@ func (m *model) applyRefresh(msg refreshResultMsg) {
 }
 
 func (m *model) refreshWithMessage(success string) {
-	expanded := map[string]bool{}
-
-	m.root.walk(func(n *node) {
-		if n.isDir && n.expanded {
-			expanded[n.path] = true
-		}
-	})
+	expanded := m.expandedPaths()
 
 	var cursorPath string
 	if cur := m.current(); cur != nil {
 		cursorPath = cur.path
 	}
 
-	m.root.children = nil
-	m.root.loaded = false
-	m.pendingPath = ""
-
-	if err := m.root.load(m.hideIgnored()); err != nil {
+	root, err := buildTree(m.root.path, expanded, m.hideIgnored())
+	if err != nil {
 		m.msg = "error: " + err.Error()
 		return
 	}
 
-	m.root.walk(func(n *node) {
-		if n.isDir && expanded[n.path] {
-			_ = n.load(m.hideIgnored())
-			n.expanded = true
-		}
-	})
+	m.root = root
+	m.pendingPath = ""
+
 	m.rebuildFlat()
 	m.restoreCursor(cursorPath)
 	m.loadGitStatus()
