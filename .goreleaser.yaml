@@ -10,7 +10,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/hoffa/vitree
-    description: Tiny Go TUI that browses the current directory and forwards files to vim
+    description: A file browser for Vim that runs in a separate terminal
     url:
       verified: github.com/hoffa/vitree
     hooks:

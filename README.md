@@ -3,9 +3,13 @@
 [![check](https://github.com/hoffa/vitree/actions/workflows/check.yml/badge.svg)](https://github.com/hoffa/vitree/actions/workflows/check.yml)
 [![release](https://github.com/hoffa/vitree/actions/workflows/release.yml/badge.svg)](https://github.com/hoffa/vitree/actions/workflows/release.yml)
 
-Vim file browser in a separate process.
+A file browser for Vim that runs in a separate terminal.
 
 <img width="1029" height="717" alt="스크린샷 2026-05-10 21 28 37" src="https://github.com/user-attachments/assets/1a2c15ab-ac99-4e58-a382-d1ea766f9664" />
+
+## Why
+
+In-editor file trees mean learning another set of bindings for resizing, splitting, and focus. `vitree` skips that — it's just a terminal you can put wherever you want.
 
 ## Install
 
