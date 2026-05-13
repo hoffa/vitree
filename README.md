@@ -5,6 +5,10 @@
 
 A Vim file browser running in a separate terminal
 
+- Mouse support
+- Automatic async tree refresh
+- Git support with ignore-aware filtering and status markers
+
 <img width="790" height="560" alt="demo" src="https://github.com/user-attachments/assets/60fcb5df-629a-4446-8569-32f3231c92df" />
 
 ## Why
