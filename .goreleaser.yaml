@@ -10,7 +10,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/hoffa/vitree
-    description: A file browser for Vim that runs in a separate terminal
+    description: A Vim file browser running in a separate terminal
     url:
       verified: github.com/hoffa/vitree
     hooks:
