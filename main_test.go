@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/gdamore/tcell/v3"
 )
 
 func mkTree(t *testing.T) string {
@@ -73,36 +74,6 @@ func newTestModel(t *testing.T) model {
 	return m
 }
 
-func key(s string) tea.KeyMsg {
-	switch s {
-	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
-	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
-	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
-	case "ctrl+c":
-		return tea.KeyMsg{Type: tea.KeyCtrlC}
-	}
-
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
-}
-
-func update(m model, msg tea.Msg) (model, tea.Cmd) {
-	nm, cmd := m.Update(msg)
-	return nm.(model), cmd
-}
-
-func isQuit(cmd tea.Cmd) bool {
-	if cmd == nil {
-		return false
-	}
-
-	_, ok := cmd().(tea.QuitMsg)
-
-	return ok
-}
-
 func fileIndex(m model, name string) int {
 	for i, n := range m.flat {
 		if n.name == name {
@@ -112,6 +83,28 @@ func fileIndex(m model, name string) int {
 
 	return -1
 }
+
+// fakeScreen implements the ui interface so draw/loop/startSync can be tested
+// without a terminal (tcell v3 has no SimulationScreen).
+type fakeScreen struct {
+	w, h  int
+	q     chan tcell.Event
+	cells map[[2]int]rune
+}
+
+func newFakeScreen(w, h int) *fakeScreen {
+	return &fakeScreen{w: w, h: h, q: make(chan tcell.Event, 64), cells: map[[2]int]rune{}}
+}
+
+func (f *fakeScreen) Size() (int, int) { return f.w, f.h }
+
+func (f *fakeScreen) SetContent(x, y int, r rune, _ []rune, _ tcell.Style) {
+	f.cells[[2]int{x, y}] = r
+}
+
+func (f *fakeScreen) Show()                    {}
+func (f *fakeScreen) Sync()                    {}
+func (f *fakeScreen) EventQ() chan tcell.Event { return f.q }
 
 func TestNewNodeError(t *testing.T) {
 	if _, err := newNode(filepath.Join(t.TempDir(), "missing"), 0); err == nil {
@@ -205,9 +198,170 @@ func TestClamp(t *testing.T) {
 	}
 }
 
-func TestInitNil(t *testing.T) {
-	if cmd := newTestModel(t).Init(); cmd != nil {
-		t.Fatal("Init should return nil")
+func TestOnKeyQuit(t *testing.T) {
+	m := newTestModel(t)
+
+	if quit, _, _ := m.onKey("q"); !quit {
+		t.Fatal("q should quit")
+	}
+
+	if quit, _, _ := m.onKey("ctrl+c"); !quit {
+		t.Fatal("ctrl+c should quit")
+	}
+}
+
+func TestOnKeyUnknownNoop(t *testing.T) {
+	m := newTestModel(t)
+
+	if quit, _, ok := m.onKey(""); quit || ok {
+		t.Fatal("unknown key should be a no-op")
+	}
+}
+
+func TestOnKeyMove(t *testing.T) {
+	m := newTestModel(t) // a_dir, b_dir, a_file.md, z_file.txt
+
+	if _, _, ok := m.onKey("up"); m.cursor != 0 || ok {
+		t.Fatalf("up at top: cursor=%d ok=%v", m.cursor, ok)
+	}
+
+	if _, _, ok := m.onKey("down"); m.cursor != 1 || ok {
+		t.Fatalf("down onto b_dir: cursor=%d ok=%v (dir, no sync)", m.cursor, ok)
+	}
+
+	_, path, ok := m.onKey("down") // a_file.md
+	if m.cursor != 2 || !ok || path != m.current().path || !m.syncing {
+		t.Fatalf("down onto file: cursor=%d ok=%v path=%q syncing=%v", m.cursor, ok, path, m.syncing)
+	}
+
+	m.cursor = len(m.flat) - 1
+	if _, _, _ = m.onKey("down"); m.cursor != len(m.flat)-1 {
+		t.Fatalf("down at bottom should not move, got %d", m.cursor)
+	}
+
+	if _, _, _ = m.onKey("up"); m.cursor != len(m.flat)-2 {
+		t.Fatalf("up should move, got %d", m.cursor)
+	}
+}
+
+func TestOnKeyEnter(t *testing.T) {
+	m := newTestModel(t) // cursor 0 = a_dir
+
+	if _, _, ok := m.onKey("enter"); ok || !m.current().expanded {
+		t.Fatalf("enter on dir: ok=%v expanded=%v", ok, m.current().expanded)
+	}
+
+	if !strings.Contains(strings.Join(names(m.flat), ","), "x.go") {
+		t.Fatalf("expanded children missing: %v", names(m.flat))
+	}
+
+	if _, _, _ = m.onKey("enter"); m.current().expanded {
+		t.Fatal("enter again should collapse")
+	}
+
+	m.cursor = fileIndex(m, "a_file.md")
+
+	_, path, ok := m.onKey("enter")
+	if !ok || path != m.current().path {
+		t.Fatalf("enter on file should sync: ok=%v path=%q", ok, path)
+	}
+
+	empty := model{root: &node{}}
+	if _, _, ok := empty.onKey("enter"); ok {
+		t.Fatal("enter with no current node should not sync")
+	}
+}
+
+func TestOnKeyRefresh(t *testing.T) {
+	m := newTestModel(t)
+	want := m.current().path
+
+	if err := os.WriteFile(filepath.Join(m.root.path, "0_new.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m.onKey("r")
+
+	if !strings.Contains(strings.Join(names(m.flat), ","), "0_new.txt") {
+		t.Fatalf("refresh missed new file: %v", names(m.flat))
+	}
+
+	if got := m.current().path; got != want {
+		t.Fatalf("cursor not preserved: got %q want %q", got, want)
+	}
+}
+
+func TestRefreshErrorIsNoop(t *testing.T) {
+	m := newTestModel(t)
+	before := strings.Join(names(m.flat), ",")
+
+	if err := os.Chmod(m.root.path, 0); err != nil {
+		t.Skip(err)
+	}
+
+	defer func() { _ = os.Chmod(m.root.path, 0o755) }()
+
+	m.refresh()
+
+	if got := strings.Join(names(m.flat), ","); got != before {
+		t.Fatalf("failed refresh should leave tree unchanged: %q -> %q", before, got)
+	}
+}
+
+func TestOnResize(t *testing.T) {
+	m := newTestModel(t)
+	m.onResize(40, 12)
+
+	if m.w != 40 || m.h != 12 || len(m.rows) != len(m.flat) {
+		t.Fatalf("resize: w=%d h=%d rows=%d flat=%d", m.w, m.h, len(m.rows), len(m.flat))
+	}
+}
+
+func TestRenderRowsMarkers(t *testing.T) {
+	m := newTestModel(t)
+
+	if !strings.HasPrefix(m.rows[0], "+ a_dir/") {
+		t.Fatalf("collapsed dir marker: %q", m.rows[0])
+	}
+
+	if !strings.HasPrefix(m.rows[2], "  a_file.md") {
+		t.Fatalf("file marker (two spaces): %q", m.rows[2])
+	}
+
+	m.onKey("enter") // expand a_dir
+
+	if !strings.HasPrefix(m.rows[0], "- a_dir/") {
+		t.Fatalf("expanded dir marker: %q", m.rows[0])
+	}
+
+	if !strings.HasPrefix(m.rows[1], "    x.go") {
+		t.Fatalf("nested file indent: %q", m.rows[1])
+	}
+}
+
+func TestRenderRowsTruncates(t *testing.T) {
+	m := newTestModel(t)
+	m.w = 4
+	m.renderRows()
+
+	for _, r := range m.rows {
+		if len([]rune(r)) > 4 {
+			t.Fatalf("row not truncated: %q", r)
+		}
+	}
+}
+
+func TestTruncateRight(t *testing.T) {
+	if got := truncateRight("abc", 5); got != "abc" {
+		t.Fatalf("short changed: %q", got)
+	}
+
+	if got := truncateRight("abcdef", 3); got != "abc" {
+		t.Fatalf("truncateRight=%q", got)
+	}
+
+	if got := truncateRight("abcdef", 0); got != "" {
+		t.Fatalf("zero width should be empty: %q", got)
 	}
 }
 
@@ -233,285 +387,6 @@ func TestRebuildFlatRespectsExpansion(t *testing.T) {
 	want := []string{"a_dir", "x.go", "b_dir", "a_file.md", "z_file.txt"}
 	if got := names(m.flat); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expanded got=%v want=%v", got, want)
-	}
-}
-
-func TestWindowSizeRendersRows(t *testing.T) {
-	m, _ := update(newTestModel(t), tea.WindowSizeMsg{Width: 40, Height: 10})
-
-	if m.w != 40 || m.h != 10 {
-		t.Fatalf("size not set: w=%d h=%d", m.w, m.h)
-	}
-
-	if len(m.rows) != len(m.flat) {
-		t.Fatalf("rows=%d flat=%d", len(m.rows), len(m.flat))
-	}
-}
-
-func TestQuit(t *testing.T) {
-	m := newTestModel(t)
-
-	if _, cmd := m.Update(key("q")); !isQuit(cmd) {
-		t.Fatal("q should quit")
-	}
-
-	if _, cmd := m.Update(key("ctrl+c")); !isQuit(cmd) {
-		t.Fatal("ctrl+c should quit")
-	}
-}
-
-func TestMoveUpDown(t *testing.T) {
-	m := newTestModel(t)
-
-	m, _ = update(m, key("up")) // at top, no-op
-	if m.cursor != 0 {
-		t.Fatalf("up at top should stay 0, got %d", m.cursor)
-	}
-
-	m, _ = update(m, key("down"))
-	if m.cursor != 1 {
-		t.Fatalf("down -> 1, got %d", m.cursor)
-	}
-
-	m.cursor = len(m.flat) - 1
-	m, _ = update(m, key("down")) // at bottom, no-op
-
-	if m.cursor != len(m.flat)-1 {
-		t.Fatalf("down at bottom should not move, got %d", m.cursor)
-	}
-
-	m, _ = update(m, key("up"))
-	if m.cursor != len(m.flat)-2 {
-		t.Fatalf("up -> %d, got %d", len(m.flat)-2, m.cursor)
-	}
-}
-
-func TestUnknownKeyNoop(t *testing.T) {
-	m := newTestModel(t)
-
-	if _, cmd := m.Update(key("x")); cmd != nil {
-		t.Fatal("unknown key should be a no-op")
-	}
-}
-
-func TestEnterTogglesDir(t *testing.T) {
-	m := newTestModel(t) // cursor 0 = a_dir
-
-	m, cmd := update(m, key("enter"))
-	if !m.current().expanded || cmd != nil {
-		t.Fatalf("enter should expand dir, no cmd: expanded=%v cmd=%v", m.current().expanded, cmd)
-	}
-
-	if !strings.Contains(strings.Join(names(m.flat), ","), "x.go") {
-		t.Fatalf("expanded children missing: %v", names(m.flat))
-	}
-
-	m, _ = update(m, key("enter"))
-	if m.current().expanded {
-		t.Fatal("enter again should collapse")
-	}
-}
-
-func TestEnterOpensFile(t *testing.T) {
-	m := newTestModel(t)
-	m.vim = writeFakeVim(t, `exit 0`)
-	m.cursor = fileIndex(m, "a_file.md")
-
-	_, cmd := m.Update(key("enter"))
-	if cmd == nil {
-		t.Fatal("enter on file should sync")
-	}
-}
-
-func TestEnterNilNode(t *testing.T) {
-	empty := model{root: &node{}, w: 80, h: 24}
-
-	if _, cmd := empty.Update(key("enter")); cmd != nil {
-		t.Fatal("enter with no current node should be nil")
-	}
-}
-
-func TestEnterExpandLoadErrorIsSilent(t *testing.T) {
-	m := newTestModel(t)
-	bad := filepath.Join(m.root.path, "a_dir")
-
-	if err := os.Chmod(bad, 0); err != nil {
-		t.Skip(err)
-	}
-
-	defer func() { _ = os.Chmod(bad, 0o755) }()
-
-	m, _ = update(m, key("enter")) // a_dir: load fails, still expands, no crash
-
-	if !m.current().expanded || len(m.current().children) != 0 {
-		t.Fatalf("expected expanded dir with no children: expanded=%v n=%d",
-			m.current().expanded, len(m.current().children))
-	}
-}
-
-func TestVimSyncCoalesces(t *testing.T) {
-	m := newTestModel(t)
-	m.vim = writeFakeVim(t, `exit 0`)
-
-	aFile := fileIndex(m, "a_file.md")
-	zFile := fileIndex(m, "z_file.txt")
-
-	m.cursor = aFile
-
-	cmd := m.syncCurrent()
-	if cmd == nil || !m.syncing || m.pendingPath != "" {
-		t.Fatalf("first sync should start: syncing=%v pending=%q cmd=%v", m.syncing, m.pendingPath, cmd)
-	}
-
-	active := m.activePath
-
-	m.cursor = zFile
-	if next := m.syncCurrent(); next != nil || m.pendingPath == "" || m.pendingPath == active {
-		t.Fatalf("in-flight move should only set pending: next=%v pending=%q", next, m.pendingPath)
-	}
-
-	m.cursor = aFile // back to active path
-	if next := m.syncCurrent(); next != nil || m.pendingPath != "" {
-		t.Fatalf("return to active should clear pending: next=%v pending=%q", next, m.pendingPath)
-	}
-
-	m.cursor = zFile
-	m.syncCurrent() // pending = z_file again
-
-	m, fin := update(m, cmd()) // first completes -> follow-up for pending
-	if fin == nil || !m.syncing {
-		t.Fatalf("completion should start follow-up: syncing=%v fin=%v", m.syncing, fin)
-	}
-
-	m, _ = update(m, fin())
-	if m.syncing || m.pendingPath != "" {
-		t.Fatalf("queue should drain clean: syncing=%v pending=%q", m.syncing, m.pendingPath)
-	}
-}
-
-func TestSyncCurrentOnDirClearsPending(t *testing.T) {
-	m := newTestModel(t)
-	m.pendingPath = "/stale"
-
-	if cmd := m.syncCurrent(); cmd != nil { // cursor 0 = a_dir
-		t.Fatal("dir selection should not sync")
-	}
-
-	if m.pendingPath != "" {
-		t.Fatalf("pending should be cleared, got %q", m.pendingPath)
-	}
-}
-
-func TestFinishSyncIgnoresError(t *testing.T) {
-	m := newTestModel(t)
-	m.cursor = fileIndex(m, "a_file.md")
-	m.syncing = true
-	m.activePath = m.current().path
-
-	m, next := update(m, vimSyncDoneMsg{path: m.current().path, err: os.ErrPermission})
-
-	if m.syncing || next != nil {
-		t.Fatalf("completion should clear syncing, no follow-up: syncing=%v next=%v", m.syncing, next)
-	}
-}
-
-func TestRefreshKeyPicksUpChanges(t *testing.T) {
-	m := newTestModel(t)
-	want := m.current().path
-
-	if err := os.WriteFile(filepath.Join(m.root.path, "0_new.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m, _ = update(m, key("r"))
-
-	if !strings.Contains(strings.Join(names(m.flat), ","), "0_new.txt") {
-		t.Fatalf("refresh missed new file: %v", names(m.flat))
-	}
-
-	if got := m.current().path; got != want {
-		t.Fatalf("cursor not preserved: got %q want %q", got, want)
-	}
-}
-
-func TestRefreshErrorIsNoop(t *testing.T) {
-	m := newTestModel(t)
-	before := strings.Join(names(m.flat), ",")
-
-	if err := os.Chmod(m.root.path, 0); err != nil {
-		t.Skip(err)
-	}
-
-	defer func() { _ = os.Chmod(m.root.path, 0o755) }()
-
-	m, _ = update(m, key("r")) // buildTree fails -> unchanged, no crash
-
-	if got := strings.Join(names(m.flat), ","); got != before {
-		t.Fatalf("failed refresh should leave tree unchanged: %q -> %q", before, got)
-	}
-}
-
-func TestViewRendersRows(t *testing.T) {
-	m := newTestModel(t)
-	v := m.View()
-
-	if !strings.Contains(v, "a_dir") || !strings.Contains(v, "z_file.txt") {
-		t.Fatalf("view missing rows: %q", v)
-	}
-
-	if strings.Contains(v, "? help") {
-		t.Fatal("status bar should be gone")
-	}
-
-	if (model{root: &node{}}).View() != "" {
-		t.Fatal("empty tree should render empty")
-	}
-}
-
-func TestRenderRowsMarkers(t *testing.T) {
-	m := newTestModel(t) // a_dir, b_dir, a_file.md, z_file.txt
-
-	if !strings.HasPrefix(m.rows[0], "+ a_dir/") {
-		t.Fatalf("collapsed dir marker: %q", m.rows[0])
-	}
-
-	if !strings.HasPrefix(m.rows[2], "  a_file.md") {
-		t.Fatalf("file marker (two spaces): %q", m.rows[2])
-	}
-
-	m, _ = update(m, key("enter")) // expand a_dir
-	if !strings.HasPrefix(m.rows[0], "- a_dir/") {
-		t.Fatalf("expanded dir marker: %q", m.rows[0])
-	}
-
-	if !strings.HasPrefix(m.rows[1], "    x.go") {
-		t.Fatalf("nested file indent: %q", m.rows[1])
-	}
-}
-
-func TestRenderRowsTruncates(t *testing.T) {
-	m := newTestModel(t)
-	m.w = 4
-	m.renderRows()
-
-	for _, r := range m.rows {
-		if len([]rune(r)) > 4 {
-			t.Fatalf("row not truncated to width: %q", r)
-		}
-	}
-}
-
-func TestTruncateRight(t *testing.T) {
-	if got := truncateRight("abc", 5); got != "abc" {
-		t.Fatalf("short changed: %q", got)
-	}
-
-	if got := truncateRight("abcdef", 3); got != "abc" {
-		t.Fatalf("truncateRight=%q", got)
-	}
-
-	if got := truncateRight("abcdef", 0); got != "" {
-		t.Fatalf("zero width should be empty: %q", got)
 	}
 }
 
@@ -569,9 +444,84 @@ func TestCurrentOutOfRange(t *testing.T) {
 	}
 }
 
+func TestSyncCoalesce(t *testing.T) {
+	m := newTestModel(t)
+	aFile := fileIndex(m, "a_file.md")
+	zFile := fileIndex(m, "z_file.txt")
+
+	m.cursor = aFile
+
+	path, ok := m.syncCurrent()
+	if !ok || !m.syncing || path != m.current().path || m.pendingPath != "" {
+		t.Fatalf("first sync should start: ok=%v syncing=%v path=%q", ok, m.syncing, path)
+	}
+
+	active := m.activePath
+
+	m.cursor = zFile
+	if _, ok := m.syncCurrent(); ok || m.pendingPath == "" || m.pendingPath == active {
+		t.Fatalf("in-flight move should only set pending: ok=%v pending=%q", ok, m.pendingPath)
+	}
+
+	m.cursor = aFile // back to active
+	if _, ok := m.syncCurrent(); ok || m.pendingPath != "" {
+		t.Fatalf("return to active should clear pending: ok=%v pending=%q", ok, m.pendingPath)
+	}
+
+	m.cursor = zFile
+	m.syncCurrent() // pending = z again
+
+	next, ok := m.finishSync(m.flat[aFile].path)
+	if !ok || !m.syncing || next != m.flat[zFile].path {
+		t.Fatalf("completion should start follow-up: ok=%v next=%q", ok, next)
+	}
+
+	if _, ok := m.finishSync(m.flat[zFile].path); ok || m.syncing || m.pendingPath != "" {
+		t.Fatalf("queue should drain clean: ok=%v syncing=%v pending=%q", ok, m.syncing, m.pendingPath)
+	}
+}
+
+func TestSyncCurrentOnDir(t *testing.T) {
+	m := newTestModel(t)
+	m.pendingPath = "/stale"
+
+	if _, ok := m.syncCurrent(); ok { // cursor 0 = a_dir
+		t.Fatal("dir selection should not sync")
+	}
+
+	if m.pendingPath != "" {
+		t.Fatalf("pending should be cleared, got %q", m.pendingPath)
+	}
+}
+
+func TestRestoreCursor(t *testing.T) {
+	m := newTestModel(t)
+	m.cursor = 2
+
+	m.restoreCursor("")
+
+	if m.cursor != 2 {
+		t.Fatalf("empty path should be no-op, got %d", m.cursor)
+	}
+
+	want := m.flat[1].path
+	m.restoreCursor(want)
+
+	if m.flat[m.cursor].path != want {
+		t.Fatalf("cursor not restored to %q", want)
+	}
+
+	m.cursor = 999
+	m.restoreCursor("/does/not/exist")
+
+	if m.cursor != len(m.flat)-1 {
+		t.Fatalf("missing path should clamp cursor, got %d", m.cursor)
+	}
+}
+
 func TestExpandedPaths(t *testing.T) {
 	m := newTestModel(t)
-	m, _ = update(m, key("enter")) // expand a_dir
+	m.onKey("enter") // expand a_dir
 
 	if !m.root.expandedPaths()[filepath.Join(m.root.path, "a_dir")] {
 		t.Fatalf("expandedPaths missing a_dir: %v", m.root.expandedPaths())
@@ -607,7 +557,7 @@ func TestBuildTree(t *testing.T) {
 	}
 }
 
-func TestBuildTreeRootReadError(t *testing.T) {
+func TestBuildTreeErrors(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0); err != nil {
 		t.Skip(err)
@@ -621,6 +571,15 @@ func TestBuildTreeRootReadError(t *testing.T) {
 
 	if _, err := buildTree(filepath.Join(dir, "nope"), nil); err == nil {
 		t.Fatal("expected newNode error for missing root")
+	}
+
+	file := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := buildTree(file, nil); err == nil {
+		t.Fatal("expected not-a-directory error")
 	}
 }
 
@@ -641,31 +600,6 @@ func TestBuildTreeTolerantOfSubdirError(t *testing.T) {
 
 	if len(r.children) == 0 {
 		t.Fatal("root children expected")
-	}
-}
-
-func TestRestoreCursor(t *testing.T) {
-	m := newTestModel(t)
-	m.cursor = 2
-
-	m.restoreCursor("")
-
-	if m.cursor != 2 {
-		t.Fatalf("empty path should be no-op, got %d", m.cursor)
-	}
-
-	want := m.flat[1].path
-	m.restoreCursor(want)
-
-	if m.flat[m.cursor].path != want {
-		t.Fatalf("cursor not restored to %q", want)
-	}
-
-	m.cursor = 999
-	m.restoreCursor("/does/not/exist")
-
-	if m.cursor != len(m.flat)-1 {
-		t.Fatalf("missing path should clamp cursor, got %d", m.cursor)
 	}
 }
 
@@ -719,7 +653,7 @@ func TestRun(t *testing.T) {
 	defer func() { runProgram = prev }()
 
 	called := false
-	runProgram = func(_ tea.Model) error { called = true; return nil }
+	runProgram = func(_ model) error { called = true; return nil }
 
 	if err := run([]string{"-vim", vim, "-server", "S"}); err != nil || !called {
 		t.Fatalf("run: err=%v called=%v", err, called)
@@ -771,11 +705,101 @@ func TestOpenInVim(t *testing.T) {
 	}
 }
 
-func TestSyncVimCmd(t *testing.T) {
-	cmd := syncVimCmd(writeFakeVim(t, `exit 0`), "S", "/tmp/x")
+func ekey(k tcell.Key, s string) *tcell.EventKey {
+	return tcell.NewEventKey(k, s, tcell.ModNone)
+}
 
-	msg, ok := cmd().(vimSyncDoneMsg)
-	if !ok || msg.err != nil || msg.path != "/tmp/x" {
-		t.Fatalf("syncVimCmd msg=%+v ok=%v", msg, ok)
+func TestKeyName(t *testing.T) {
+	cases := []struct {
+		ev   *tcell.EventKey
+		want string
+	}{
+		{ekey(tcell.KeyCtrlC, ""), "ctrl+c"},
+		{ekey(tcell.KeyUp, ""), "up"},
+		{ekey(tcell.KeyDown, ""), "down"},
+		{ekey(tcell.KeyEnter, ""), "enter"},
+		{ekey(tcell.KeyRune, "q"), "q"},
+		{ekey(tcell.KeyRune, "r"), "r"},
+		{ekey(tcell.KeyRune, "x"), ""},
+		{ekey(tcell.KeyEsc, ""), ""},
+	}
+	for _, c := range cases {
+		if got := keyName(c.ev); got != c.want {
+			t.Fatalf("keyName(%v)=%q want %q", c.ev.Key(), got, c.want)
+		}
+	}
+}
+
+func TestDraw(t *testing.T) {
+	s := newFakeScreen(30, 10)
+	m := newTestModel(t)
+	m.onResize(s.Size())
+
+	draw(s, &m)
+
+	if got := s.cells[[2]int{0, 0}]; got != '+' { // rows[0] = "+ a_dir/"
+		t.Fatalf("first cell=%q want '+'", got)
+	}
+
+	if got := s.cells[[2]int{29, 9}]; got != ' ' {
+		t.Fatalf("blank tail cell=%q want ' '", got)
+	}
+}
+
+func TestStartSync(t *testing.T) {
+	s := newFakeScreen(10, 10)
+	startSync(s, writeFakeVim(t, `exit 0`), "S", "/some/path")
+
+	select {
+	case ev := <-s.q:
+		sd, ok := ev.(*syncDoneEvent)
+		if !ok || sd.path != "/some/path" {
+			t.Fatalf("unexpected event %#v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no syncDoneEvent posted")
+	}
+}
+
+func TestLoop(t *testing.T) {
+	s := newFakeScreen(30, 10)
+	m := newTestModel(t)
+	m.vim = writeFakeVim(t, `exit 0`)
+
+	s.q <- tcell.NewEventResize(30, 10)
+
+	s.q <- ekey(tcell.KeyDown, "") // b_dir (dir)
+
+	s.q <- ekey(tcell.KeyDown, "") // a_file.md -> startSync
+
+	s.q <- &syncDoneEvent{at: time.Now(), path: "/x"}
+
+	s.q <- ekey(tcell.KeyRune, "z") // unknown
+
+	s.q <- ekey(tcell.KeyRune, "q") // quit
+
+	done := make(chan struct{})
+
+	go func() { loop(s, m); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loop did not return on q")
+	}
+}
+
+func TestLoopReturnsOnClosedQueue(t *testing.T) {
+	s := newFakeScreen(10, 5)
+	close(s.q)
+
+	done := make(chan struct{})
+
+	go func() { loop(s, newTestModel(t)); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop should return when the event queue closes")
 	}
 }

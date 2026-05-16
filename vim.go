@@ -7,20 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
-
-type vimSyncDoneMsg struct {
-	path string
-	err  error
-}
-
-func syncVimCmd(vim, server, path string) tea.Cmd {
-	return func() tea.Msg {
-		return vimSyncDoneMsg{path: path, err: openInVim(vim, server, path)}
-	}
-}
 
 func vimServers(vim string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
