@@ -16,6 +16,7 @@ type node struct {
 	isDir    bool
 	expanded bool
 	loaded   bool
+	ignored  bool
 	depth    int
 	children []*node
 }
@@ -145,6 +146,14 @@ func buildTree(rootPath string, expanded map[string]bool) (*node, error) {
 	}
 
 	expand(root)
+
+	var paths []string
+
+	root.walk(func(n *node) { paths = append(paths, n.path) })
+
+	ignored := gitIgnored(rootPath, paths)
+
+	root.walk(func(n *node) { n.ignored = ignored[n.path] })
 
 	return root, nil
 }

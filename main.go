@@ -488,8 +488,12 @@ func draw(s ui, m *model) {
 
 	for i := start; i < end; i++ {
 		st := tcell.StyleDefault
-		if i == m.cursor {
+
+		switch {
+		case i == m.cursor:
 			st = st.Reverse(true)
+		case m.flat[i].ignored:
+			st = st.Dim(true)
 		}
 
 		drawRow(s, y, m.rows[i], w, st)

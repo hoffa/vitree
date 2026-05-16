@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,6 +29,36 @@ func mkTree(t *testing.T) string {
 		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	return root
+}
+
+func mkGitignoredTree(t *testing.T) string {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	root := t.TempDir()
+	for _, p := range []string{"keep.txt", "ignored.log", "build/out.txt"} {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\nbuild/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
 	}
 
 	return root
@@ -87,19 +118,26 @@ func fileIndex(m model, name string) int {
 // fakeScreen implements the ui interface so draw/loop/startSync can be tested
 // without a terminal (tcell v3 has no SimulationScreen).
 type fakeScreen struct {
-	w, h  int
-	q     chan tcell.Event
-	cells map[[2]int]rune
+	w, h   int
+	q      chan tcell.Event
+	cells  map[[2]int]rune
+	styles map[[2]int]tcell.Style
 }
 
 func newFakeScreen(w, h int) *fakeScreen {
-	return &fakeScreen{w: w, h: h, q: make(chan tcell.Event, 64), cells: map[[2]int]rune{}}
+	return &fakeScreen{
+		w: w, h: h,
+		q:      make(chan tcell.Event, 64),
+		cells:  map[[2]int]rune{},
+		styles: map[[2]int]tcell.Style{},
+	}
 }
 
 func (f *fakeScreen) Size() (int, int) { return f.w, f.h }
 
-func (f *fakeScreen) SetContent(x, y int, r rune, _ []rune, _ tcell.Style) {
+func (f *fakeScreen) SetContent(x, y int, r rune, _ []rune, st tcell.Style) {
 	f.cells[[2]int{x, y}] = r
+	f.styles[[2]int{x, y}] = st
 }
 
 func (f *fakeScreen) Show()                    {}
@@ -722,6 +760,45 @@ func TestBuildTreeTolerantOfSubdirError(t *testing.T) {
 	}
 }
 
+func TestGitIgnored(t *testing.T) {
+	root := mkGitignoredTree(t)
+
+	keep := filepath.Join(root, "keep.txt")
+	log := filepath.Join(root, "ignored.log")
+	build := filepath.Join(root, "build")
+
+	ig := gitIgnored(root, []string{keep, log, build})
+	if ig[keep] || !ig[log] || !ig[build] {
+		t.Fatalf("gitIgnored wrong: keep=%v log=%v build=%v", ig[keep], ig[log], ig[build])
+	}
+
+	// Empty input and a non-repo dir are graceful no-ops.
+	if len(gitIgnored(root, nil)) != 0 {
+		t.Fatal("empty paths should yield empty set")
+	}
+
+	if len(gitIgnored(t.TempDir(), []string{"/x"})) != 0 {
+		t.Fatal("non-repo dir should yield empty set")
+	}
+}
+
+func TestBuildTreeMarksIgnored(t *testing.T) {
+	root := mkGitignoredTree(t)
+
+	r, err := buildTree(root, map[string]bool{root: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]bool{}
+
+	r.walk(func(n *node) { got[n.name] = n.ignored })
+
+	if got["keep.txt"] || !got["ignored.log"] || !got["build"] {
+		t.Fatalf("ignored flags wrong: %v", got)
+	}
+}
+
 func TestNewModel(t *testing.T) {
 	dir := mkTree(t)
 	vim := writeFakeVim(t, `echo "EDIT"`)
@@ -856,6 +933,36 @@ func TestDraw(t *testing.T) {
 
 	if got := s.cells[[2]int{29, 9}]; got != ' ' {
 		t.Fatalf("blank tail cell=%q want ' '", got)
+	}
+}
+
+func TestDrawDimsIgnored(t *testing.T) {
+	m := newTestModel(t) // a_dir, b_dir, a_file.md, z_file.txt
+	m.flat[1].ignored = true
+	m.cursor = 0
+
+	s := newFakeScreen(30, 10)
+	m.onResize(s.Size())
+	draw(s, &m)
+
+	if !s.styles[[2]int{0, 1}].HasDim() {
+		t.Fatal("ignored row should be dim")
+	}
+
+	if s.styles[[2]int{0, 0}].HasDim() {
+		t.Fatal("non-ignored row should not be dim")
+	}
+
+	if !s.styles[[2]int{0, 0}].HasReverse() {
+		t.Fatal("selected row should be reverse video")
+	}
+
+	// The selected row wins over dim even if it is itself ignored.
+	m.flat[0].ignored = true
+	draw(s, &m)
+
+	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() || st.HasDim() {
+		t.Fatalf("selected ignored row: reverse=%v dim=%v", st.HasReverse(), st.HasDim())
 	}
 }
 
