@@ -114,6 +114,8 @@ func (m *model) collapse() (string, bool) {
 		return "", false
 	}
 
+	// No parent pointer on node by design: the parent is just the nearest
+	// earlier flat entry that is one level shallower, so scan back to it.
 	for i := m.cursor - 1; i >= 0; i-- {
 		if m.flat[i].depth == cur.depth-1 {
 			m.cursor = i
@@ -258,9 +260,13 @@ func (m *model) maxRows() int {
 	return m.h
 }
 
+// ensureVisible scrolls the minimum amount so the cursor sits inside the
+// visible window [scroll, scroll+mr): pin to the top when the cursor went
+// above it, to the bottom when it went below, then clamp so the last screen
+// isn't scrolled past the end.
 func (m *model) ensureVisible() {
 	mr := m.maxRows()
-	if mr <= 0 {
+	if mr <= 0 { // no usable height yet (e.g. size unknown at startup)
 		m.scroll = 0
 		return
 	}
@@ -487,9 +493,16 @@ func draw(s ui, m *model) {
 	y := 0
 
 	for i := start; i < end; i++ {
+		// Order matters: the selected row is always plain reverse video, even
+		// if it is itself gitignored — reverse wins over dim so the cursor
+		// never looks washed out.
 		st := tcell.StyleDefault
-		if i == m.cursor {
+
+		switch {
+		case i == m.cursor:
 			st = st.Reverse(true)
+		case m.flat[i].ignored:
+			st = st.Dim(true)
 		}
 
 		drawRow(s, y, m.rows[i], w, st)
@@ -517,7 +530,7 @@ func loop(s ui, m model) {
 	for {
 		ev, ok := <-s.EventQ()
 		if !ok {
-			return
+			return // screen shut down: EventQ closed
 		}
 
 		switch ev := ev.(type) {
@@ -544,10 +557,15 @@ func loop(s ui, m model) {
 
 			draw(s, &m)
 		case *refreshTickEvent:
+			// One rebuild at a time; a tick while one is in flight is dropped.
 			if m.refreshing {
 				break
 			}
 
+			// Snapshot what the rebuild needs here, on the UI goroutine — the
+			// tree is owned by this goroutine and must not be read off it. The
+			// slow part (buildTree: disk + git) then runs in a goroutine so it
+			// never blocks scrolling; it reports back via refreshDoneEvent.
 			m.refreshing = true
 			rootPath := m.root.path
 			expanded := m.root.expandedPaths()
