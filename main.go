@@ -34,13 +34,11 @@ func clamp(v, lo, hi int) int {
 
 // onKey applies a keystroke. It reports whether to quit and, if a file became
 // current, the path to forward to vim (already coalesced through requestSync).
-func (m *model) onKey(name string) (bool, string, bool) {
-	switch name {
-	case "ctrl+c", "q":
+func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
+	switch ev.Key() {
+	case tcell.KeyCtrlC:
 		return true, "", false
-	case "r":
-		m.refresh()
-	case "up":
+	case tcell.KeyUp:
 		if m.cursor > 0 {
 			m.cursor--
 			m.ensureVisible()
@@ -49,7 +47,7 @@ func (m *model) onKey(name string) (bool, string, bool) {
 
 			return false, path, ok
 		}
-	case "down":
+	case tcell.KeyDown:
 		if m.cursor < len(m.flat)-1 {
 			m.cursor++
 			m.ensureVisible()
@@ -58,7 +56,7 @@ func (m *model) onKey(name string) (bool, string, bool) {
 
 			return false, path, ok
 		}
-	case "enter":
+	case tcell.KeyEnter:
 		cur := m.current()
 		if cur == nil {
 			break
@@ -78,6 +76,13 @@ func (m *model) onKey(name string) (bool, string, bool) {
 		}
 
 		m.rebuildFlat()
+	case tcell.KeyRune:
+		switch ev.Str() {
+		case "q":
+			return true, "", false
+		case "r":
+			m.refresh()
+		}
 	}
 
 	return false, "", false
@@ -312,28 +317,6 @@ func startSync(s ui, vim, server, path string) {
 	}()
 }
 
-func keyName(ev *tcell.EventKey) string {
-	switch ev.Key() {
-	case tcell.KeyCtrlC:
-		return "ctrl+c"
-	case tcell.KeyUp:
-		return "up"
-	case tcell.KeyDown:
-		return "down"
-	case tcell.KeyEnter:
-		return "enter"
-	case tcell.KeyRune:
-		switch ev.Str() {
-		case "q":
-			return "q"
-		case "r":
-			return "r"
-		}
-	}
-
-	return ""
-}
-
 // drawRow writes one screen row and pads it to full width with spaces in the
 // same style. The padding makes the row self-clearing (no screen Clear needed)
 // and gives the selected row a full-width reverse bar.
@@ -399,7 +382,7 @@ func loop(s ui, m model) {
 			m.onResize(w, h)
 			draw(s, &m)
 		case *tcell.EventKey:
-			quit, path, ok := m.onKey(keyName(ev))
+			quit, path, ok := m.onKey(ev)
 			if quit {
 				return
 			}

@@ -201,11 +201,11 @@ func TestClamp(t *testing.T) {
 func TestOnKeyQuit(t *testing.T) {
 	m := newTestModel(t)
 
-	if quit, _, _ := m.onKey("q"); !quit {
+	if quit, _, _ := m.onKey(ekey(tcell.KeyRune, "q")); !quit {
 		t.Fatal("q should quit")
 	}
 
-	if quit, _, _ := m.onKey("ctrl+c"); !quit {
+	if quit, _, _ := m.onKey(ekey(tcell.KeyCtrlC, "")); !quit {
 		t.Fatal("ctrl+c should quit")
 	}
 }
@@ -213,33 +213,38 @@ func TestOnKeyQuit(t *testing.T) {
 func TestOnKeyUnknownNoop(t *testing.T) {
 	m := newTestModel(t)
 
-	if quit, _, ok := m.onKey(""); quit || ok {
-		t.Fatal("unknown key should be a no-op")
+	for _, ev := range []*tcell.EventKey{
+		ekey(tcell.KeyRune, "x"), // unhandled rune
+		ekey(tcell.KeyEsc, ""),   // unhandled key
+	} {
+		if quit, _, ok := m.onKey(ev); quit || ok {
+			t.Fatalf("unknown key %v should be a no-op", ev.Key())
+		}
 	}
 }
 
 func TestOnKeyMove(t *testing.T) {
 	m := newTestModel(t) // a_dir, b_dir, a_file.md, z_file.txt
 
-	if _, _, ok := m.onKey("up"); m.cursor != 0 || ok {
+	if _, _, ok := m.onKey(ekey(tcell.KeyUp, "")); m.cursor != 0 || ok {
 		t.Fatalf("up at top: cursor=%d ok=%v", m.cursor, ok)
 	}
 
-	if _, _, ok := m.onKey("down"); m.cursor != 1 || ok {
+	if _, _, ok := m.onKey(ekey(tcell.KeyDown, "")); m.cursor != 1 || ok {
 		t.Fatalf("down onto b_dir: cursor=%d ok=%v (dir, no sync)", m.cursor, ok)
 	}
 
-	_, path, ok := m.onKey("down") // a_file.md
+	_, path, ok := m.onKey(ekey(tcell.KeyDown, "")) // a_file.md
 	if m.cursor != 2 || !ok || path != m.current().path || !m.syncing {
 		t.Fatalf("down onto file: cursor=%d ok=%v path=%q syncing=%v", m.cursor, ok, path, m.syncing)
 	}
 
 	m.cursor = len(m.flat) - 1
-	if _, _, _ = m.onKey("down"); m.cursor != len(m.flat)-1 {
+	if _, _, _ = m.onKey(ekey(tcell.KeyDown, "")); m.cursor != len(m.flat)-1 {
 		t.Fatalf("down at bottom should not move, got %d", m.cursor)
 	}
 
-	if _, _, _ = m.onKey("up"); m.cursor != len(m.flat)-2 {
+	if _, _, _ = m.onKey(ekey(tcell.KeyUp, "")); m.cursor != len(m.flat)-2 {
 		t.Fatalf("up should move, got %d", m.cursor)
 	}
 }
@@ -247,7 +252,7 @@ func TestOnKeyMove(t *testing.T) {
 func TestOnKeyEnter(t *testing.T) {
 	m := newTestModel(t) // cursor 0 = a_dir
 
-	if _, _, ok := m.onKey("enter"); ok || !m.current().expanded {
+	if _, _, ok := m.onKey(ekey(tcell.KeyEnter, "")); ok || !m.current().expanded {
 		t.Fatalf("enter on dir: ok=%v expanded=%v", ok, m.current().expanded)
 	}
 
@@ -255,19 +260,19 @@ func TestOnKeyEnter(t *testing.T) {
 		t.Fatalf("expanded children missing: %v", names(m.flat))
 	}
 
-	if _, _, _ = m.onKey("enter"); m.current().expanded {
+	if _, _, _ = m.onKey(ekey(tcell.KeyEnter, "")); m.current().expanded {
 		t.Fatal("enter again should collapse")
 	}
 
 	m.cursor = fileIndex(m, "a_file.md")
 
-	_, path, ok := m.onKey("enter")
+	_, path, ok := m.onKey(ekey(tcell.KeyEnter, ""))
 	if !ok || path != m.current().path {
 		t.Fatalf("enter on file should sync: ok=%v path=%q", ok, path)
 	}
 
 	empty := model{root: &node{}}
-	if _, _, ok := empty.onKey("enter"); ok {
+	if _, _, ok := empty.onKey(ekey(tcell.KeyEnter, "")); ok {
 		t.Fatal("enter with no current node should not sync")
 	}
 }
@@ -280,7 +285,7 @@ func TestOnKeyRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.onKey("r")
+	m.onKey(ekey(tcell.KeyRune, "r"))
 
 	if !strings.Contains(strings.Join(names(m.flat), ","), "0_new.txt") {
 		t.Fatalf("refresh missed new file: %v", names(m.flat))
@@ -328,7 +333,7 @@ func TestRenderRowsMarkers(t *testing.T) {
 		t.Fatalf("file marker (two spaces): %q", m.rows[2])
 	}
 
-	m.onKey("enter") // expand a_dir
+	m.onKey(ekey(tcell.KeyEnter, "")) // expand a_dir
 
 	if !strings.HasPrefix(m.rows[0], "- a_dir/") {
 		t.Fatalf("expanded dir marker: %q", m.rows[0])
@@ -521,7 +526,7 @@ func TestRestoreCursor(t *testing.T) {
 
 func TestExpandedPaths(t *testing.T) {
 	m := newTestModel(t)
-	m.onKey("enter") // expand a_dir
+	m.onKey(ekey(tcell.KeyEnter, "")) // expand a_dir
 
 	if !m.root.expandedPaths()[filepath.Join(m.root.path, "a_dir")] {
 		t.Fatalf("expandedPaths missing a_dir: %v", m.root.expandedPaths())
@@ -707,27 +712,6 @@ func TestOpenInVim(t *testing.T) {
 
 func ekey(k tcell.Key, s string) *tcell.EventKey {
 	return tcell.NewEventKey(k, s, tcell.ModNone)
-}
-
-func TestKeyName(t *testing.T) {
-	cases := []struct {
-		ev   *tcell.EventKey
-		want string
-	}{
-		{ekey(tcell.KeyCtrlC, ""), "ctrl+c"},
-		{ekey(tcell.KeyUp, ""), "up"},
-		{ekey(tcell.KeyDown, ""), "down"},
-		{ekey(tcell.KeyEnter, ""), "enter"},
-		{ekey(tcell.KeyRune, "q"), "q"},
-		{ekey(tcell.KeyRune, "r"), "r"},
-		{ekey(tcell.KeyRune, "x"), ""},
-		{ekey(tcell.KeyEsc, ""), ""},
-	}
-	for _, c := range cases {
-		if got := keyName(c.ev); got != c.want {
-			t.Fatalf("keyName(%v)=%q want %q", c.ev.Key(), got, c.want)
-		}
-	}
 }
 
 func TestDraw(t *testing.T) {
