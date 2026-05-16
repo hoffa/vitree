@@ -573,8 +573,8 @@ func TestExpandedPaths(t *testing.T) {
 	m := newTestModel(t)
 	m, _ = update(m, key("enter")) // expand a_dir
 
-	if !m.expandedPaths()[filepath.Join(m.root.path, "a_dir")] {
-		t.Fatalf("expandedPaths missing a_dir: %v", m.expandedPaths())
+	if !m.root.expandedPaths()[filepath.Join(m.root.path, "a_dir")] {
+		t.Fatalf("expandedPaths missing a_dir: %v", m.root.expandedPaths())
 	}
 }
 

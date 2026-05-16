@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,16 +16,6 @@ import (
 // selectedStyle is the only styling vitree applies: reverse video on the
 // highlighted row. No colors, no bold anywhere else.
 var selectedStyle = lipgloss.NewStyle().Reverse(true)
-
-type node struct {
-	path     string
-	name     string
-	isDir    bool
-	expanded bool
-	loaded   bool
-	depth    int
-	children []*node
-}
 
 type model struct {
 	root        *node
@@ -40,70 +29,6 @@ type model struct {
 	pendingPath string
 	w, h        int
 	rows        []string
-}
-
-func newNode(path string, depth int) (*node, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-
-	return &node{
-		path:  path,
-		name:  filepath.Base(path),
-		isDir: info.IsDir(),
-		depth: depth,
-	}, nil
-}
-
-func (n *node) walk(fn func(*node)) {
-	fn(n)
-
-	for _, c := range n.children {
-		c.walk(fn)
-	}
-}
-
-func (n *node) load() error {
-	if !n.isDir || n.loaded {
-		return nil
-	}
-
-	entries, err := os.ReadDir(n.path)
-	if err != nil {
-		return err
-	}
-
-	n.children = childrenFrom(n, entries)
-	n.loaded = true
-
-	return nil
-}
-
-func childrenFrom(parent *node, entries []os.DirEntry) []*node {
-	sort.Slice(entries, func(i, j int) bool {
-		di, dj := entries[i].IsDir(), entries[j].IsDir()
-		if di != dj {
-			return di
-		}
-
-		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
-	})
-
-	var out []*node
-
-	for _, e := range entries {
-		abs := filepath.Join(parent.path, e.Name())
-
-		c, err := newNode(abs, parent.depth+1)
-		if err != nil {
-			continue
-		}
-
-		out = append(out, c)
-	}
-
-	return out
 }
 
 func clamp(v, lo, hi int) int {
@@ -230,22 +155,7 @@ func truncateRight(s string, maxWidth int) string {
 }
 
 func (m *model) rebuildFlat() {
-	m.flat = m.flat[:0]
-
-	var walk func(n *node)
-
-	walk = func(n *node) {
-		m.flat = append(m.flat, n)
-		if n.isDir && n.expanded {
-			for _, c := range n.children {
-				walk(c)
-			}
-		}
-	}
-	for _, c := range m.root.children {
-		walk(c)
-	}
-
+	m.flat = m.root.flatten(m.flat[:0])
 	m.cursor = clamp(m.cursor, 0, len(m.flat)-1)
 	m.ensureVisible()
 	m.renderRows()
@@ -330,9 +240,7 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 // refresh re-reads the tree from disk, preserving expansion and the cursor's
 // file. It is synchronous and bound to `r`; there is no background refresh.
 func (m *model) refresh() {
-	expanded := m.expandedPaths()
-
-	root, err := buildTree(m.root.path, expanded)
+	root, err := buildTree(m.root.path, m.root.expandedPaths())
 	if err != nil {
 		return
 	}
@@ -346,53 +254,6 @@ func (m *model) refresh() {
 
 	m.rebuildFlat()
 	m.restoreCursor(cursorPath)
-}
-
-func (m model) expandedPaths() map[string]bool {
-	expanded := map[string]bool{}
-
-	m.root.walk(func(n *node) {
-		if n.isDir && n.expanded {
-			expanded[n.path] = true
-		}
-	})
-
-	return expanded
-}
-
-// buildTree is the one way a tree is constructed: read rootPath, then
-// recursively load and re-expand every directory in `expanded`. A subdir that
-// fails to read is left collapsed rather than failing the whole tree.
-func buildTree(rootPath string, expanded map[string]bool) (*node, error) {
-	root, err := newNode(rootPath, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	if !root.isDir {
-		return nil, fmt.Errorf("not a directory: %s", rootPath)
-	}
-
-	root.expanded = true
-	if err := root.load(); err != nil {
-		return nil, err
-	}
-
-	var expand func(n *node)
-
-	expand = func(n *node) {
-		for _, c := range n.children {
-			if c.isDir && expanded[c.path] {
-				c.expanded = true
-				_ = c.load()
-				expand(c)
-			}
-		}
-	}
-
-	expand(root)
-
-	return root, nil
 }
 
 func (m *model) restoreCursor(path string) {
