@@ -37,8 +37,6 @@ type model struct {
 	scroll      int
 	vim         string
 	server      string
-	err         string
-	help        bool
 	syncing     bool
 	activePath  string
 	pendingPath string
@@ -127,71 +125,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case vimSyncDoneMsg:
 		return m, m.finishSync(msg)
 	case tea.KeyMsg:
-		if m.help {
-			m.help = false
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
-
-			return m, nil
-		}
-
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
-		case "?":
-			m.help = true
 		case "r":
 			m.refresh()
-		case "up", "k":
+		case "up":
 			if m.cursor > 0 {
 				m.cursor--
 				m.ensureVisible()
 
 				return m, m.syncCurrent()
 			}
-		case "down", "j":
+		case "down":
 			if m.cursor < len(m.flat)-1 {
 				m.cursor++
 				m.ensureVisible()
 
 				return m, m.syncCurrent()
 			}
-		case "left", "h":
-			cur := m.current()
-			if cur == nil {
-				break
-			}
-
-			if cur.isDir && cur.expanded {
-				cur.expanded = false
-
-				m.rebuildFlat()
-				m.pendingPath = ""
-			} else if cur.parent != nil && cur.parent != m.root {
-				for i, n := range m.flat {
-					if n == cur.parent {
-						m.cursor = i
-						break
-					}
-				}
-
-				m.ensureVisible()
-				m.pendingPath = ""
-			}
-		case "right", "l":
-			cur := m.current()
-			if cur == nil || !cur.isDir {
-				break
-			}
-
-			if err := cur.load(); err != nil {
-				m.err = "error: " + err.Error()
-			}
-
-			cur.expanded = true
-
-			m.rebuildFlat()
 		case "enter":
 			cur := m.current()
 			if cur == nil {
@@ -205,10 +157,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cur.expanded {
 				cur.expanded = false
 			} else {
-				if err := cur.load(); err != nil {
-					m.err = "error: " + err.Error()
-				}
-
+				_ = cur.load()
 				cur.expanded = true
 			}
 
@@ -220,16 +169,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	if m.help {
-		return m.helpView()
-	}
-
 	var b strings.Builder
 
 	start := m.scroll
 	end := min(start+m.maxRows(), len(m.flat))
-
-	rendered := 0
 
 	for i := start; i < end; i++ {
 		line := m.rows[i]
@@ -237,25 +180,12 @@ func (m model) View() string {
 			line = selectedStyle.Width(m.w).Render(line)
 		}
 
-		b.WriteString(line + "\n")
+		if i > start {
+			b.WriteByte('\n')
+		}
 
-		rendered++
+		b.WriteString(line)
 	}
-
-	gap := max(0, m.h-rendered-1)
-	b.WriteString(strings.Repeat("\n", gap))
-
-	left := m.root.path + "/"
-	if m.err != "" {
-		left = m.err
-	}
-
-	right := "? help"
-	rightWidth := lipgloss.Width(right)
-
-	left = truncateRight(left, max(0, m.w-rightWidth-1))
-	pad := max(1, m.w-lipgloss.Width(left)-rightWidth)
-	b.WriteString(left + strings.Repeat(" ", pad) + right)
 
 	return b.String()
 }
@@ -325,12 +255,11 @@ func (m *model) rebuildFlat() {
 }
 
 func (m *model) maxRows() int {
-	r := m.h - 1
-	if r <= 0 {
+	if m.h <= 0 {
 		return len(m.flat)
 	}
 
-	return r
+	return m.h
 }
 
 func (m *model) ensureVisible() {
@@ -391,14 +320,6 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 	m.syncing = false
 	m.activePath = ""
 
-	if cur := m.current(); cur != nil && cur.path == msg.path {
-		if msg.err != nil {
-			m.err = "error: " + msg.err.Error()
-		} else {
-			m.err = ""
-		}
-	}
-
 	pending := m.pendingPath
 	m.pendingPath = ""
 
@@ -416,7 +337,6 @@ func (m *model) refresh() {
 
 	root, err := buildTree(m.root.path, expanded)
 	if err != nil {
-		m.err = "error: " + err.Error()
 		return
 	}
 
@@ -426,7 +346,6 @@ func (m *model) refresh() {
 	}
 
 	m.root = root
-	m.err = ""
 
 	m.rebuildFlat()
 	m.restoreCursor(cursorPath)
@@ -520,24 +439,6 @@ func (m *model) restoreCursor(path string) {
 
 	m.cursor = min(m.cursor, max(0, len(m.flat)-1))
 	m.ensureVisible()
-}
-
-func (m model) helpView() string {
-	body := `keys
-  up down       j k     move
-  left right    h l     collapse  expand
-  enter                 toggle dir  open file
-  r                     refresh
-  ?                     toggle this help
-  q                     quit
-
-vim server
-  ` + m.server
-	hint := "press any key to close"
-	gap := max(0, m.h-strings.Count(body, "\n")-2)
-	pad := max(0, m.w-lipgloss.Width(hint))
-
-	return body + "\n" + strings.Repeat("\n", gap) + strings.Repeat(" ", pad) + hint
 }
 
 func newModel(vim, server, path string) (model, error) {
