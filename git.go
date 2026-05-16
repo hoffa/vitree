@@ -52,6 +52,8 @@ func gitIgnored(dir string, paths []string) map[string]bool {
 		return ignored
 	}
 
+	// --stdin -z reads NUL-terminated paths and writes NUL-terminated hits;
+	// NUL is used because it is the one byte a filename can't contain.
 	for _, p := range paths {
 		_, _ = stdin.Write([]byte(p))
 		_, _ = stdin.Write([]byte{0})
@@ -59,10 +61,15 @@ func gitIgnored(dir string, paths []string) map[string]bool {
 
 	_ = stdin.Close()
 
+	// check-ignore exits 1 when *nothing* matched (normal, not an error) and
+	// 128 on a real failure. So only treat it as failed when it also produced
+	// no output; otherwise fall through and parse what it gave us.
 	if err := cmd.Wait(); err != nil && out.Len() == 0 {
 		return ignored
 	}
 
+	// Output is the ignored paths, NUL-separated, with a trailing NUL — so the
+	// final split field is always "" and is skipped.
 	for name := range strings.SplitSeq(out.String(), "\x00") {
 		if name != "" {
 			ignored[name] = true
