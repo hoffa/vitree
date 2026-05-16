@@ -567,8 +567,14 @@ func TestViewBasics(t *testing.T) {
 		t.Fatalf("view missing rows/status: %q", v)
 	}
 
-	if !strings.Contains(v, filepath.Base(m.root.path)) {
-		t.Fatal("status should show root path")
+	// Status truncates from the right, so it shows the path's prefix.
+	prefix := m.root.path
+	if len(prefix) > 10 {
+		prefix = prefix[:10]
+	}
+
+	if !strings.Contains(v, prefix) {
+		t.Fatal("status should show root path prefix")
 	}
 
 	m.err = "error: boom"
@@ -619,20 +625,6 @@ func TestRenderRowsTruncates(t *testing.T) {
 	}
 }
 
-func TestTruncateLeft(t *testing.T) {
-	if got := truncateLeft("abc", 5); got != "abc" {
-		t.Fatalf("short changed: %q", got)
-	}
-
-	if got := truncateLeft("abcdef", 0); got != "" {
-		t.Fatalf("non-positive width should be empty: %q", got)
-	}
-
-	if got := truncateLeft("abcdefgh", 5); got != "defgh" {
-		t.Fatalf("truncateLeft should keep the last 5 runes with no ellipsis, got %q", got)
-	}
-}
-
 func TestTruncateRight(t *testing.T) {
 	if got := truncateRight("abc", 5); got != "abc" {
 		t.Fatalf("short changed: %q", got)
@@ -640,6 +632,10 @@ func TestTruncateRight(t *testing.T) {
 
 	if got := truncateRight("abcdef", 3); got != "abc" {
 		t.Fatalf("truncateRight=%q", got)
+	}
+
+	if got := truncateRight("abcdef", 0); got != "" {
+		t.Fatalf("zero width should be empty: %q", got)
 	}
 }
 

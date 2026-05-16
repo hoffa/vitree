@@ -253,7 +253,7 @@ func (m model) View() string {
 	right := "? help"
 	rightWidth := lipgloss.Width(right)
 
-	left = truncateLeft(left, max(0, m.w-rightWidth-1))
+	left = truncateRight(left, max(0, m.w-rightWidth-1))
 	pad := max(1, m.w-lipgloss.Width(left)-rightWidth)
 	b.WriteString(left + strings.Repeat(" ", pad) + right)
 
@@ -291,19 +291,6 @@ func (m *model) renderRows() {
 
 		m.rows[i] = row
 	}
-}
-
-func truncateLeft(s string, maxWidth int) string {
-	runes := []rune(s)
-	if len(runes) <= maxWidth {
-		return s
-	}
-
-	if maxWidth <= 0 {
-		return ""
-	}
-
-	return string(runes[len(runes)-maxWidth:])
 }
 
 func truncateRight(s string, maxWidth int) string {
