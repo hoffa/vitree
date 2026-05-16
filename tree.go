@@ -88,30 +88,52 @@ func (n *node) load() error {
 	return nil
 }
 
+// childrenFrom builds parent's child nodes straight from the directory
+// entries. It deliberately does NOT stat each entry: os.ReadDir already
+// reported the name and type, and vitree needs nothing else — so a directory
+// with N files costs zero extra syscalls instead of N. Sort keys are
+// lowercased once (O(n)) rather than inside the comparator (O(n log n)).
 func childrenFrom(parent *node, entries []os.DirEntry) []*node {
-	sort.Slice(entries, func(i, j int) bool {
-		di, dj := entries[i].IsDir(), entries[j].IsDir()
-		if di != dj {
-			return di
-		}
-
-		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
-	})
-
-	var out []*node
-
-	for _, e := range entries {
-		abs := filepath.Join(parent.path, e.Name())
-
-		c, err := newNode(abs, parent.depth+1)
-		if err != nil {
-			continue
-		}
-
-		out = append(out, c)
+	s := dirsFirst{
+		nodes: make([]*node, len(entries)),
+		keys:  make([]string, len(entries)),
 	}
 
-	return out
+	for i, e := range entries {
+		s.nodes[i] = &node{
+			path:  filepath.Join(parent.path, e.Name()),
+			name:  e.Name(),
+			isDir: e.IsDir(),
+			depth: parent.depth + 1,
+		}
+		s.keys[i] = strings.ToLower(e.Name())
+	}
+
+	sort.Sort(&s)
+
+	return s.nodes
+}
+
+// dirsFirst orders directories before files, then case-insensitively by name,
+// using precomputed lowercase keys so no allocation happens per comparison.
+type dirsFirst struct {
+	nodes []*node
+	keys  []string
+}
+
+func (s *dirsFirst) Len() int { return len(s.nodes) }
+
+func (s *dirsFirst) Swap(i, j int) {
+	s.nodes[i], s.nodes[j] = s.nodes[j], s.nodes[i]
+	s.keys[i], s.keys[j] = s.keys[j], s.keys[i]
+}
+
+func (s *dirsFirst) Less(i, j int) bool {
+	if s.nodes[i].isDir != s.nodes[j].isDir {
+		return s.nodes[i].isDir
+	}
+
+	return s.keys[i] < s.keys[j]
 }
 
 // buildTree is the one way a tree is constructed: read rootPath, then
