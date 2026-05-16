@@ -2,7 +2,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -27,7 +26,6 @@ type node struct {
 	loaded   bool
 	depth    int
 	children []*node
-	parent   *node
 }
 
 type model struct {
@@ -44,18 +42,17 @@ type model struct {
 	rows        []string
 }
 
-func newNode(path string, depth int, parent *node) (*node, error) {
+func newNode(path string, depth int) (*node, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 
 	return &node{
-		path:   path,
-		name:   filepath.Base(path),
-		isDir:  info.IsDir(),
-		depth:  depth,
-		parent: parent,
+		path:  path,
+		name:  filepath.Base(path),
+		isDir: info.IsDir(),
+		depth: depth,
 	}, nil
 }
 
@@ -98,7 +95,7 @@ func childrenFrom(parent *node, entries []os.DirEntry) []*node {
 	for _, e := range entries {
 		abs := filepath.Join(parent.path, e.Name())
 
-		c, err := newNode(abs, parent.depth+1, parent)
+		c, err := newNode(abs, parent.depth+1)
 		if err != nil {
 			continue
 		}
@@ -363,62 +360,37 @@ func (m model) expandedPaths() map[string]bool {
 	return expanded
 }
 
-// buildTree reads the directory tree at rootPath plus every directory in
-// expanded, marking those expanded.
+// buildTree is the one way a tree is constructed: read rootPath, then
+// recursively load and re-expand every directory in `expanded`. A subdir that
+// fails to read is left collapsed rather than failing the whole tree.
 func buildTree(rootPath string, expanded map[string]bool) (*node, error) {
-	root, err := newNode(rootPath, 0, nil)
+	root, err := newNode(rootPath, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	rootEntries, err := os.ReadDir(rootPath)
-	if err != nil {
-		return nil, err
-	}
-
-	scanned := map[string][]os.DirEntry{rootPath: rootEntries}
-
-	for path := range expanded {
-		if path == rootPath {
-			continue
-		}
-
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			continue
-		}
-
-		scanned[path] = entries
-	}
-
-	var build func(*node)
-
-	build = func(n *node) {
-		entries, ok := scanned[n.path]
-		if !ok {
-			return
-		}
-
-		n.children = childrenFrom(n, entries)
-		n.loaded = true
-
-		for _, c := range n.children {
-			if !c.isDir {
-				continue
-			}
-
-			if expanded[c.path] {
-				c.expanded = true
-			}
-
-			if _, ok := scanned[c.path]; ok {
-				build(c)
-			}
-		}
+	if !root.isDir {
+		return nil, fmt.Errorf("not a directory: %s", rootPath)
 	}
 
 	root.expanded = true
-	build(root)
+	if err := root.load(); err != nil {
+		return nil, err
+	}
+
+	var expand func(n *node)
+
+	expand = func(n *node) {
+		for _, c := range n.children {
+			if c.isDir && expanded[c.path] {
+				c.expanded = true
+				_ = c.load()
+				expand(c)
+			}
+		}
+	}
+
+	expand(root)
 
 	return root, nil
 }
@@ -460,22 +432,12 @@ func newModel(vim, server, path string) (model, error) {
 		abs = resolved
 	}
 
-	root, err := newNode(abs, 0, nil)
+	root, err := buildTree(abs, nil)
 	if err != nil {
 		return model{}, err
 	}
 
-	if !root.isDir {
-		return model{}, errors.New("root must be a directory")
-	}
-
 	m := model{root: root, server: server, vim: vim}
-	if err := root.load(); err != nil {
-		return model{}, err
-	}
-
-	root.expanded = true
-
 	m.rebuildFlat()
 
 	return m, nil

@@ -57,7 +57,7 @@ func newTestModel(t *testing.T) model {
 	t.Helper()
 	root := mkTree(t)
 
-	r, err := newNode(root, 0, nil)
+	r, err := newNode(root, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func fileIndex(m model, name string) int {
 }
 
 func TestNewNodeError(t *testing.T) {
-	if _, err := newNode(filepath.Join(t.TempDir(), "missing"), 0, nil); err == nil {
+	if _, err := newNode(filepath.Join(t.TempDir(), "missing"), 0); err == nil {
 		t.Fatal("expected error for missing path")
 	}
 }
@@ -130,7 +130,7 @@ func TestLoadSortsDirsFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := newNode(root, 0, nil)
+	n, err := newNode(root, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestLoadSortsDirsFirst(t *testing.T) {
 func TestLoadNonDirAndAlreadyLoaded(t *testing.T) {
 	root := mkTree(t)
 
-	f, err := newNode(filepath.Join(root, "z_file.txt"), 0, nil)
+	f, err := newNode(filepath.Join(root, "z_file.txt"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestLoadNonDirAndAlreadyLoaded(t *testing.T) {
 		t.Fatalf("non-dir load: err=%v loaded=%v", err, f.loaded)
 	}
 
-	d, err := newNode(root, 0, nil)
+	d, err := newNode(root, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestLoadReadError(t *testing.T) {
 
 	defer func() { _ = os.Chmod(bad, 0o755) }()
 
-	n, err := newNode(bad, 0, nil)
+	n, err := newNode(bad, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
