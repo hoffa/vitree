@@ -785,7 +785,11 @@ func TestGitIgnored(t *testing.T) {
 func TestBuildTreeMarksIgnored(t *testing.T) {
 	root := mkGitignoredTree(t)
 
-	r, err := buildTree(root, map[string]bool{root: true, filepath.Join(root, "build"): true})
+	r, err := buildTree(root, map[string]bool{
+		root:                         true,
+		filepath.Join(root, "build"): true,
+		filepath.Join(root, ".git"):  true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -795,8 +799,9 @@ func TestBuildTreeMarksIgnored(t *testing.T) {
 	r.walk(func(n *node) { got[n.name] = n.ignored })
 
 	// keep.txt clean; *.log and build/ ignored; out.txt ignored via its
-	// ignored parent; .git always dimmed.
-	if got["keep.txt"] || !got["ignored.log"] || !got["build"] || !got["out.txt"] || !got[".git"] {
+	// ignored parent; .git and everything under it (e.g. HEAD) dimmed.
+	if got["keep.txt"] || !got["ignored.log"] || !got["build"] ||
+		!got["out.txt"] || !got[".git"] || !got["HEAD"] {
 		t.Fatalf("ignored flags wrong: %v", got)
 	}
 }
