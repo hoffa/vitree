@@ -13,12 +13,11 @@ In-editor file trees mean learning another set of bindings for resizing, splitti
 
 ## Features
 
-- Fast async TUI
-- Automatic tree refresh
-- `.gitignore` and Git status marker support
-- Mouse support
-- Vim-like navigation
-- ANSI colors
+- Moving the selection forwards the highlighted file to a running Vim server
+- Async TUI with no scroll lag
+- Vim-style (`hjkl`), arrow, and mouse navigation
+- Background auto-refresh (configurable)
+- Dims `.gitignore`d files and `.git`
 
 ## Install
 
@@ -56,4 +55,29 @@ In another terminal, run:
 vitree
 ```
 
-Files matched by `.gitignore` are hidden by default. Press `f` to cycle filter modes (default → changed only → show all), or `?` for the full key list.
+Moving the selection onto a file opens it in the Vim server; directories
+expand and collapse in place. `.gitignore`d files and `.git` are dimmed, not
+hidden.
+
+### Keys
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, `↓` / `↑` | move selection |
+| `l` / `→` | expand directory, or open file |
+| `h` / `←` | collapse directory, or go to parent |
+| `Enter` | toggle directory / open file |
+| `r` | refresh now |
+| `q` / `Ctrl-C` | quit |
+
+The mouse works too: wheel scrolls the selection, left-click selects and
+opens.
+
+### Options
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-server` | auto-detected | Vim `--servername` to send files to |
+| `-vim` | `vim` | Vim binary to invoke (e.g. `mvim`, `gvim`) |
+| `-refresh` | `2s` | auto-refresh interval; `0` disables |
+| `-version` | | print version and exit |
