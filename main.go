@@ -8,14 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/gdamore/tcell/v3"
+	"github.com/mattn/go-runewidth"
 )
-
-// selectedStyle is the only styling vitree applies: reverse video on the
-// highlighted row. No colors, no bold anywhere else.
-var selectedStyle = lipgloss.NewStyle().Reverse(true)
 
 type model struct {
 	root        *node
@@ -35,87 +32,71 @@ func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
 }
 
-func (m model) Init() tea.Cmd {
-	return nil
-}
+// onKey applies a keystroke. It reports whether to quit and, if a file became
+// current, the path to forward to vim (already coalesced through requestSync).
+func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
+	switch ev.Key() {
+	case tcell.KeyCtrlC:
+		return true, "", false
+	case tcell.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.ensureVisible()
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.w, m.h = msg.Width, msg.Height
-		m.renderRows()
-	case vimSyncDoneMsg:
-		return m, m.finishSync(msg)
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
+			path, ok := m.syncCurrent()
+
+			return false, path, ok
+		}
+	case tcell.KeyDown:
+		if m.cursor < len(m.flat)-1 {
+			m.cursor++
+			m.ensureVisible()
+
+			path, ok := m.syncCurrent()
+
+			return false, path, ok
+		}
+	case tcell.KeyEnter:
+		cur := m.current()
+		if cur == nil {
+			break
+		}
+
+		if !cur.isDir {
+			path, ok := m.syncCurrent()
+
+			return false, path, ok
+		}
+
+		if cur.expanded {
+			cur.expanded = false
+		} else {
+			_ = cur.load()
+			cur.expanded = true
+		}
+
+		m.rebuildFlat()
+	case tcell.KeyRune:
+		switch ev.Str() {
+		case "q":
+			return true, "", false
 		case "r":
 			m.refresh()
-		case "up":
-			if m.cursor > 0 {
-				m.cursor--
-				m.ensureVisible()
-
-				return m, m.syncCurrent()
-			}
-		case "down":
-			if m.cursor < len(m.flat)-1 {
-				m.cursor++
-				m.ensureVisible()
-
-				return m, m.syncCurrent()
-			}
-		case "enter":
-			cur := m.current()
-			if cur == nil {
-				break
-			}
-
-			if !cur.isDir {
-				return m, m.syncCurrent()
-			}
-
-			if cur.expanded {
-				cur.expanded = false
-			} else {
-				_ = cur.load()
-				cur.expanded = true
-			}
-
-			m.rebuildFlat()
 		}
 	}
 
-	return m, nil
+	return false, "", false
 }
 
-func (m model) View() string {
-	var b strings.Builder
-
-	start := m.scroll
-	end := min(start+m.maxRows(), len(m.flat))
-
-	for i := start; i < end; i++ {
-		line := m.rows[i]
-		if i == m.cursor {
-			line = selectedStyle.Width(m.w).Render(line)
-		}
-
-		if i > start {
-			b.WriteByte('\n')
-		}
-
-		b.WriteString(line)
-	}
-
-	return b.String()
+func (m *model) onResize(w, h int) {
+	m.w, m.h = w, h
+	m.renderRows()
 }
 
 // renderRows rebuilds the m.rows display cache from m.flat. It is the only
 // place row text is built/truncated, so it must be called whenever the tree or
-// terminal width changes. View() then reads the cache and only applies the
-// cursor overlay, keeping a held cursor move O(1).
+// terminal width changes. draw() then reads the cache and only applies the
+// cursor overlay, keeping a held cursor move cheap.
 func (m *model) renderRows() {
 	m.rows = make([]string, len(m.flat))
 
@@ -137,7 +118,7 @@ func (m *model) renderRows() {
 
 		row := indent + marker + n.name + suffix
 
-		if m.w > 0 && lipgloss.Width(row) > m.w {
+		if m.w > 0 && runewidth.StringWidth(row) > m.w {
 			row = truncateRight(row, m.w)
 		}
 
@@ -146,12 +127,11 @@ func (m *model) renderRows() {
 }
 
 func truncateRight(s string, maxWidth int) string {
-	runes := []rune(s)
-	if len(runes) <= maxWidth {
-		return s
+	if maxWidth <= 0 {
+		return ""
 	}
 
-	return string(runes[:max(0, maxWidth)])
+	return runewidth.Truncate(s, maxWidth, "")
 }
 
 func (m *model) rebuildFlat() {
@@ -193,20 +173,23 @@ func (m *model) current() *node {
 	return m.flat[m.cursor]
 }
 
-func (m *model) syncCurrent() tea.Cmd {
+// syncCurrent returns the path to forward to vim for the highlighted node, or
+// ok=false when it is a directory / nothing is selected.
+func (m *model) syncCurrent() (string, bool) {
 	cur := m.current()
 	if cur == nil || cur.isDir {
 		m.pendingPath = ""
-		return nil
+		return "", false
 	}
 
 	return m.requestSync(cur.path)
 }
 
-// requestSync forwards path to vim, but only one vim exec runs at a time. While
-// one is in flight, the latest requested path is remembered and fired once the
-// running one completes, so flying through files coalesces to the last.
-func (m *model) requestSync(path string) tea.Cmd {
+// requestSync coalesces vim forwarding: only one vim exec runs at a time. While
+// one is in flight the latest requested path is remembered and returned by
+// finishSync once the running one completes, so flying through files collapses
+// to the last. ok=true means the caller should start the exec now.
+func (m *model) requestSync(path string) (string, bool) {
 	if m.syncing {
 		if path == m.activePath {
 			m.pendingPath = ""
@@ -214,24 +197,24 @@ func (m *model) requestSync(path string) tea.Cmd {
 			m.pendingPath = path
 		}
 
-		return nil
+		return "", false
 	}
 
 	m.syncing = true
 	m.activePath = path
 
-	return syncVimCmd(m.vim, m.server, path)
+	return path, true
 }
 
-func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
+func (m *model) finishSync(donePath string) (string, bool) {
 	m.syncing = false
 	m.activePath = ""
 
 	pending := m.pendingPath
 	m.pendingPath = ""
 
-	if pending == "" || pending == msg.path {
-		return nil
+	if pending == "" || pending == donePath {
+		return "", false
 	}
 
 	return m.requestSync(pending)
@@ -304,9 +287,135 @@ func newModel(vim, server, path string) (model, error) {
 	return m, nil
 }
 
-var runProgram = func(m tea.Model) error {
-	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
-	return err
+// syncDoneEvent is posted to the tcell loop by the background vim exec started
+// in startSync, so completion is handled on the single UI goroutine.
+type syncDoneEvent struct {
+	at   time.Time
+	path string
+}
+
+func (e *syncDoneEvent) When() time.Time { return e.at }
+
+// ui is the slice of tcell.Screen the render loop needs. Kept narrow so it can
+// be faked in tests — tcell v3 removed the public SimulationScreen.
+type ui interface {
+	Size() (int, int)
+	SetContent(x, y int, primary rune, combining []rune, style tcell.Style)
+	Show()
+	Sync()
+	EventQ() chan tcell.Event
+}
+
+func startSync(s ui, vim, server, path string) {
+	go func() {
+		_ = openInVim(vim, server, path)
+
+		// EventQ is closed on shutdown; a send racing Fini would panic.
+		defer func() { _ = recover() }()
+
+		s.EventQ() <- &syncDoneEvent{at: time.Now(), path: path}
+	}()
+}
+
+// drawRow writes one screen row and pads it to full width with spaces in the
+// same style. The padding makes the row self-clearing (no screen Clear needed)
+// and gives the selected row a full-width reverse bar.
+func drawRow(s ui, y int, text string, w int, st tcell.Style) {
+	x := 0
+
+	for _, r := range text {
+		if x >= w {
+			break
+		}
+
+		s.SetContent(x, y, r, nil, st)
+		x += runewidth.RuneWidth(r)
+	}
+
+	for ; x < w; x++ {
+		s.SetContent(x, y, ' ', nil, st)
+	}
+}
+
+func draw(s ui, m *model) {
+	w, h := s.Size()
+
+	start := m.scroll
+	end := min(start+m.maxRows(), len(m.flat))
+
+	y := 0
+
+	for i := start; i < end; i++ {
+		st := tcell.StyleDefault
+		if i == m.cursor {
+			st = st.Reverse(true)
+		}
+
+		drawRow(s, y, m.rows[i], w, st)
+		y++
+	}
+
+	for ; y < h; y++ {
+		drawRow(s, y, "", w, tcell.StyleDefault)
+	}
+
+	s.Show()
+}
+
+// loop is the whole event loop: poll, mutate the model, draw. One goroutine, no
+// frame-rate throttle — every keystroke draws immediately.
+func loop(s ui, m model) {
+	w, h := s.Size()
+	m.onResize(w, h)
+	draw(s, &m)
+
+	for {
+		ev, ok := <-s.EventQ()
+		if !ok {
+			return
+		}
+
+		switch ev := ev.(type) {
+		case *tcell.EventResize:
+			s.Sync()
+			w, h := s.Size()
+			m.onResize(w, h)
+			draw(s, &m)
+		case *tcell.EventKey:
+			quit, path, ok := m.onKey(ev)
+			if quit {
+				return
+			}
+
+			if ok {
+				startSync(s, m.vim, m.server, path)
+			}
+
+			draw(s, &m)
+		case *syncDoneEvent:
+			if path, ok := m.finishSync(ev.path); ok {
+				startSync(s, m.vim, m.server, path)
+			}
+		}
+	}
+}
+
+var runProgram = func(m model) error {
+	s, err := tcell.NewScreen()
+	if err != nil {
+		return err
+	}
+
+	if err := s.Init(); err != nil {
+		return err
+	}
+
+	defer s.Fini()
+
+	s.HideCursor()
+	loop(s, m)
+
+	return nil
 }
 
 var version = "dev"
