@@ -3,16 +3,33 @@ package main
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
 
-// gitIgnored returns the subset of paths that git ignores, evaluated from dir.
-// It is best-effort: if dir is not a git repo, git is missing, or anything
-// fails, it returns an empty set so nothing is dimmed. One batched
-// `git check-ignore` call covers the whole tree.
+// underGitDir reports whether path has a .git component, i.e. it is the git
+// directory or anything inside it.
+func underGitDir(path string) bool {
+	return slices.Contains(strings.Split(path, string(filepath.Separator)), ".git")
+}
+
+// gitIgnored returns the subset of paths git ignores, evaluated from dir. It is
+// the single source of truth for "what git ignores": `git check-ignore` for
+// .gitignore rules (it already reports descendants of an ignored dir), plus
+// .git itself and its contents, which git excludes internally and
+// check-ignore never reports. Best-effort: a non-repo, missing git, or any
+// failure just means only the .git entries come back.
 func gitIgnored(dir string, paths []string) map[string]bool {
 	ignored := map[string]bool{}
+
+	for _, p := range paths {
+		if underGitDir(p) {
+			ignored[p] = true
+		}
+	}
+
 	if len(paths) == 0 {
 		return ignored
 	}

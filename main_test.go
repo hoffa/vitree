@@ -772,13 +772,19 @@ func TestGitIgnored(t *testing.T) {
 		t.Fatalf("gitIgnored wrong: keep=%v log=%v build=%v", ig[keep], ig[log], ig[build])
 	}
 
-	// Empty input and a non-repo dir are graceful no-ops.
-	if len(gitIgnored(root, nil)) != 0 {
-		t.Fatal("empty paths should yield empty set")
+	// .git and its contents are reported by gitIgnored itself (check-ignore
+	// never reports them), even outside a repo.
+	gitDir := filepath.Join(root, ".git")
+	gitHead := filepath.Join(root, ".git", "HEAD")
+
+	ig = gitIgnored(t.TempDir(), []string{gitDir, gitHead, "/plain/x"})
+	if !ig[gitDir] || !ig[gitHead] || ig["/plain/x"] {
+		t.Fatalf("gitIgnored .git handling wrong: %v", ig)
 	}
 
-	if len(gitIgnored(t.TempDir(), []string{"/x"})) != 0 {
-		t.Fatal("non-repo dir should yield empty set")
+	// Empty input is a graceful no-op.
+	if len(gitIgnored(root, nil)) != 0 {
+		t.Fatal("empty paths should yield empty set")
 	}
 }
 

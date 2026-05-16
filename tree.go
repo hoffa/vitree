@@ -162,20 +162,7 @@ func buildTree(rootPath string, expanded map[string]bool) (*node, error) {
 
 	ignored := gitIgnored(rootPath, paths)
 
-	// ignored is inherited: a node is ignored if check-ignore says so, if it
-	// is .git (git excludes it implicitly and check-ignore never reports it,
-	// nor anything inside it), or if any ancestor is ignored — git can't
-	// re-include under an excluded parent.
-	var mark func(n *node, parentIgnored bool)
-
-	mark = func(n *node, parentIgnored bool) {
-		n.ignored = parentIgnored || n.name == ".git" || ignored[n.path]
-		for _, c := range n.children {
-			mark(c, n.ignored)
-		}
-	}
-
-	mark(root, false)
+	root.walk(func(n *node) { n.ignored = ignored[n.path] })
 
 	return root, nil
 }
