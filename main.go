@@ -32,8 +32,9 @@ func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
 }
 
-// onKey applies a keystroke. It reports whether to quit and, if a file became
-// current, the path to forward to vim (already coalesced through requestSync).
+// onKey applies a keystroke. It reports whether to quit and, when enter opens a
+// file, the path to forward to vim. Cursor movement never touches vim — only
+// enter does — so holding up/down is pure navigation.
 func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 	switch ev.Key() {
 	case tcell.KeyCtrlC:
@@ -42,19 +43,11 @@ func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 		if m.cursor > 0 {
 			m.cursor--
 			m.ensureVisible()
-
-			path, ok := m.syncCurrent()
-
-			return false, path, ok
 		}
 	case tcell.KeyDown:
 		if m.cursor < len(m.flat)-1 {
 			m.cursor++
 			m.ensureVisible()
-
-			path, ok := m.syncCurrent()
-
-			return false, path, ok
 		}
 	case tcell.KeyEnter:
 		cur := m.current()

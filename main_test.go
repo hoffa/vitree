@@ -231,12 +231,13 @@ func TestOnKeyMove(t *testing.T) {
 	}
 
 	if _, _, ok := m.onKey(ekey(tcell.KeyDown, "")); m.cursor != 1 || ok {
-		t.Fatalf("down onto b_dir: cursor=%d ok=%v (dir, no sync)", m.cursor, ok)
+		t.Fatalf("down: cursor=%d ok=%v (movement never syncs)", m.cursor, ok)
 	}
 
-	_, path, ok := m.onKey(ekey(tcell.KeyDown, "")) // a_file.md
-	if m.cursor != 2 || !ok || path != m.current().path || !m.syncing {
-		t.Fatalf("down onto file: cursor=%d ok=%v path=%q syncing=%v", m.cursor, ok, path, m.syncing)
+	// Moving onto a file must NOT sync — only enter does.
+	if _, path, ok := m.onKey(ekey(tcell.KeyDown, "")); m.cursor != 2 || ok || path != "" || m.syncing {
+		t.Fatalf("down onto file should not sync: cursor=%d ok=%v path=%q syncing=%v",
+			m.cursor, ok, path, m.syncing)
 	}
 
 	m.cursor = len(m.flat) - 1
@@ -754,7 +755,9 @@ func TestLoop(t *testing.T) {
 
 	s.q <- ekey(tcell.KeyDown, "") // b_dir (dir)
 
-	s.q <- ekey(tcell.KeyDown, "") // a_file.md -> startSync
+	s.q <- ekey(tcell.KeyDown, "") // a_file.md (movement: no sync)
+
+	s.q <- ekey(tcell.KeyEnter, "") // open a_file.md -> startSync
 
 	s.q <- &syncDoneEvent{at: time.Now(), path: "/x"}
 
