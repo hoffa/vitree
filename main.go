@@ -15,18 +15,23 @@ import (
 )
 
 type model struct {
-	root        *node
-	flat        []*node
-	cursor      int
-	scroll      int
-	vim         string
-	server      string
-	syncing     bool
-	activePath  string
-	pendingPath string
-	w, h        int
-	rows        []string
+	root         *node
+	flat         []*node
+	cursor       int
+	scroll       int
+	vim          string
+	server       string
+	syncing      bool
+	activePath   string
+	pendingPath  string
+	refreshEvery time.Duration
+	refreshing   bool
+	w, h         int
+	rows         []string
 }
+
+// defaultRefresh is the auto-refresh interval used when -refresh is not given.
+const defaultRefresh = 2 * time.Second
 
 func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
@@ -255,14 +260,9 @@ func (m *model) finishSync(donePath string) (string, bool) {
 	return m.requestSync(pending)
 }
 
-// refresh re-reads the tree from disk, preserving expansion and the cursor's
-// file. It is synchronous and bound to `r`; there is no background refresh.
-func (m *model) refresh() {
-	root, err := buildTree(m.root.path, m.root.expandedPaths())
-	if err != nil {
-		return
-	}
-
+// applyRoot swaps in a freshly built tree, keeping the cursor on the same file
+// path. Cheap (no disk) so it is safe to run on the UI goroutine.
+func (m *model) applyRoot(root *node) {
 	var cursorPath string
 	if cur := m.current(); cur != nil {
 		cursorPath = cur.path
@@ -272,6 +272,14 @@ func (m *model) refresh() {
 
 	m.rebuildFlat()
 	m.restoreCursor(cursorPath)
+}
+
+// refresh re-reads the tree from disk synchronously. Bound to `r`; the
+// background auto-refresh uses the same buildTree off the UI goroutine.
+func (m *model) refresh() {
+	if root, err := buildTree(m.root.path, m.root.expandedPaths()); err == nil {
+		m.applyRoot(root)
+	}
 }
 
 func (m *model) restoreCursor(path string) {
@@ -330,6 +338,35 @@ type syncDoneEvent struct {
 }
 
 func (e *syncDoneEvent) When() time.Time { return e.at }
+
+// refreshTickEvent is posted by the auto-refresh ticker; the loop reacts by
+// spawning a background rebuild. refreshDoneEvent carries that rebuilt tree
+// back (root nil = the rebuild failed; the current tree is kept).
+type refreshTickEvent struct{}
+
+func (*refreshTickEvent) When() time.Time { return time.Time{} }
+
+type refreshDoneEvent struct{ root *node }
+
+func (*refreshDoneEvent) When() time.Time { return time.Time{} }
+
+// startRefreshTicker posts a refreshTickEvent every d. It returns a stop func;
+// the goroutine itself is left to die with the process (CLI, exits on quit).
+func startRefreshTicker(s ui, d time.Duration) func() {
+	t := time.NewTicker(d)
+
+	go func() {
+		for range t.C {
+			func() {
+				defer func() { _ = recover() }() // EventQ closed on shutdown
+
+				s.EventQ() <- &refreshTickEvent{}
+			}()
+		}
+	}()
+
+	return t.Stop
+}
 
 // ui is the slice of tcell.Screen the render loop needs. Kept narrow so it can
 // be faked in tests — tcell v3 removed the public SimulationScreen.
@@ -404,6 +441,10 @@ func loop(s ui, m model) {
 	m.onResize(w, h)
 	draw(s, &m)
 
+	if m.refreshEvery > 0 {
+		defer startRefreshTicker(s, m.refreshEvery)()
+	}
+
 	for {
 		ev, ok := <-s.EventQ()
 		if !ok {
@@ -433,6 +474,34 @@ func loop(s ui, m model) {
 			}
 
 			draw(s, &m)
+		case *refreshTickEvent:
+			if m.refreshing {
+				break
+			}
+
+			m.refreshing = true
+			rootPath := m.root.path
+			expanded := m.root.expandedPaths()
+
+			go func() {
+				root, err := buildTree(rootPath, expanded)
+
+				defer func() { _ = recover() }() // EventQ closed on shutdown
+
+				if err != nil {
+					s.EventQ() <- &refreshDoneEvent{root: nil}
+					return
+				}
+
+				s.EventQ() <- &refreshDoneEvent{root: root}
+			}()
+		case *refreshDoneEvent:
+			m.refreshing = false
+
+			if ev.root != nil {
+				m.applyRoot(ev.root)
+				draw(s, &m)
+			}
 		case *syncDoneEvent:
 			if path, ok := m.finishSync(ev.path); ok {
 				startSync(s, m.vim, m.server, path)
@@ -467,6 +536,7 @@ func run(args []string) error {
 	server := fs.String("server", "", "vim --servername to send files to (auto-detected if empty)")
 
 	vim := fs.String("vim", "vim", "vim binary to invoke (e.g. mvim, gvim, /path/to/vim)")
+	refresh := fs.Duration("refresh", defaultRefresh, "auto-refresh interval; 0 disables")
 	showVersion := fs.Bool("version", false, "print version and exit")
 
 	if err := fs.Parse(args); err != nil {
@@ -482,6 +552,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	m.refreshEvery = *refresh
 
 	return runProgram(m)
 }

@@ -704,10 +704,25 @@ func TestRun(t *testing.T) {
 	defer func() { runProgram = prev }()
 
 	called := false
-	runProgram = func(_ model) error { called = true; return nil }
+
+	var got model
+
+	runProgram = func(m model) error { called = true; got = m; return nil }
 
 	if err := run([]string{"-vim", vim, "-server", "S"}); err != nil || !called {
 		t.Fatalf("run: err=%v called=%v", err, called)
+	}
+
+	if got.refreshEvery != defaultRefresh {
+		t.Fatalf("default refresh = %v, want %v", got.refreshEvery, defaultRefresh)
+	}
+
+	if err := run([]string{"-vim", vim, "-server", "S", "-refresh", "0"}); err != nil {
+		t.Fatalf("run -refresh 0: %v", err)
+	}
+
+	if got.refreshEvery != 0 {
+		t.Fatalf("-refresh 0 should disable, got %v", got.refreshEvery)
 	}
 
 	called = false
@@ -833,5 +848,82 @@ func TestLoopReturnsOnClosedQueue(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("loop should return when the event queue closes")
+	}
+}
+
+func TestLoopAutoRefresh(t *testing.T) {
+	s := newFakeScreen(20, 10)
+	m := newTestModel(t) // refreshEvery 0: no real ticker, events driven manually
+
+	fresh, err := buildTree(m.root.path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.q <- &refreshTickEvent{} // not refreshing -> spawn rebuild
+
+	s.q <- &refreshTickEvent{} // refreshing -> guard skips
+
+	s.q <- &refreshDoneEvent{root: fresh} // apply + draw
+
+	s.q <- &refreshDoneEvent{root: nil} // failed rebuild -> tree kept
+
+	s.q <- ekey(tcell.KeyRune, "q")
+
+	done := make(chan struct{})
+
+	go func() { loop(s, m); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loop did not return on q")
+	}
+}
+
+func TestRefreshTickerFires(t *testing.T) {
+	s := newFakeScreen(20, 10)
+	m := newTestModel(t)
+	m.refreshEvery = 5 * time.Millisecond // real ticker -> tick -> rebuild -> apply
+
+	done := make(chan struct{})
+
+	go func() { loop(s, m); close(done) }()
+
+	time.Sleep(80 * time.Millisecond) // let several ticks + rebuilds run
+
+	s.q <- ekey(tcell.KeyRune, "q")
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop with refresh ticker did not return on q")
+	}
+}
+
+func TestRefreshWorkerBuildError(t *testing.T) {
+	s := newFakeScreen(20, 10)
+	m := newTestModel(t)
+
+	if err := os.Chmod(m.root.path, 0); err != nil {
+		t.Skip(err)
+	}
+
+	defer func() { _ = os.Chmod(m.root.path, 0o755) }()
+
+	s.q <- &refreshTickEvent{} // worker buildTree fails -> posts root:nil
+
+	done := make(chan struct{})
+
+	go func() { loop(s, m); close(done) }()
+
+	time.Sleep(50 * time.Millisecond) // let the worker run and post
+
+	s.q <- ekey(tcell.KeyRune, "q")
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not return on q")
 	}
 }
