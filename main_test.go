@@ -624,17 +624,12 @@ func TestTruncateLeft(t *testing.T) {
 		t.Fatalf("short changed: %q", got)
 	}
 
-	if got := truncateLeft("abcdef", 2); got != "" {
-		t.Fatalf("tiny width should be empty: %q", got)
+	if got := truncateLeft("abcdef", 0); got != "" {
+		t.Fatalf("non-positive width should be empty: %q", got)
 	}
 
-	got := truncateLeft("abcdefgh", 5)
-	if got != "...fgh" && len([]rune(got)) != 5 {
-		t.Fatalf("truncateLeft=%q (len=%d)", got, len([]rune(got)))
-	}
-
-	if !strings.HasPrefix(got, "...") {
-		t.Fatalf("expected ascii ellipsis prefix: %q", got)
+	if got := truncateLeft("abcdefgh", 5); got != "defgh" {
+		t.Fatalf("truncateLeft should keep the last 5 runes with no ellipsis, got %q", got)
 	}
 }
 

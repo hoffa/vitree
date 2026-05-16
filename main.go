@@ -299,11 +299,11 @@ func truncateLeft(s string, maxWidth int) string {
 		return s
 	}
 
-	if maxWidth < 3 {
+	if maxWidth <= 0 {
 		return ""
 	}
 
-	return "..." + string(runes[len(runes)-maxWidth+3:])
+	return string(runes[len(runes)-maxWidth:])
 }
 
 func truncateRight(s string, maxWidth int) string {
