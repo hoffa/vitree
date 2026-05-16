@@ -277,6 +277,52 @@ func TestOnKeyEnter(t *testing.T) {
 	}
 }
 
+func emouse(y int, b tcell.ButtonMask) *tcell.EventMouse {
+	return tcell.NewEventMouse(0, y, b, tcell.ModNone)
+}
+
+func TestOnMouseWheel(t *testing.T) {
+	m := newTestModel(t) // a_dir, b_dir, a_file.md, z_file.txt
+
+	if _, ok := m.onMouse(emouse(0, tcell.WheelUp)); m.cursor != 0 || ok {
+		t.Fatalf("wheel up at top: cursor=%d ok=%v", m.cursor, ok)
+	}
+
+	if _, ok := m.onMouse(emouse(0, tcell.WheelDown)); m.cursor != 1 || ok {
+		t.Fatalf("wheel down onto b_dir: cursor=%d ok=%v (dir, no sync)", m.cursor, ok)
+	}
+
+	if _, ok := m.onMouse(emouse(0, tcell.WheelDown)); m.cursor != 2 || !ok {
+		t.Fatalf("wheel down onto a_file.md: cursor=%d ok=%v (file syncs)", m.cursor, ok)
+	}
+}
+
+func TestOnMouseClick(t *testing.T) {
+	// Click a file row: selects it and forwards to vim.
+	m := newTestModel(t)
+	if _, ok := m.onMouse(emouse(2, tcell.ButtonPrimary)); m.cursor != 2 || !ok {
+		t.Fatalf("click file: cursor=%d ok=%v", m.cursor, ok)
+	}
+
+	// Click a directory row: selects and toggles it, no sync.
+	m = newTestModel(t)
+	if _, ok := m.onMouse(emouse(0, tcell.ButtonPrimary)); ok || !m.current().expanded {
+		t.Fatalf("click dir: ok=%v expanded=%v", ok, m.current().expanded)
+	}
+
+	// Click below the list and button-release are no-ops.
+	m = newTestModel(t)
+	before := m.cursor
+
+	if _, ok := m.onMouse(emouse(999, tcell.ButtonPrimary)); ok || m.cursor != before {
+		t.Fatalf("click out of range moved/synced: cursor=%d ok=%v", m.cursor, ok)
+	}
+
+	if _, ok := m.onMouse(emouse(0, tcell.ButtonNone)); ok {
+		t.Fatal("button release should be a no-op")
+	}
+}
+
 func TestOnKeyRefresh(t *testing.T) {
 	m := newTestModel(t)
 	want := m.current().path
@@ -757,6 +803,8 @@ func TestLoop(t *testing.T) {
 	s.q <- ekey(tcell.KeyDown, "") // a_file.md -> startSync
 
 	s.q <- &syncDoneEvent{at: time.Now(), path: "/x"}
+
+	s.q <- tcell.NewEventMouse(0, 0, tcell.WheelUp, tcell.ModNone) // wheel
 
 	s.q <- ekey(tcell.KeyRune, "z") // unknown
 

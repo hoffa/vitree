@@ -32,50 +32,59 @@ func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
 }
 
+// move shifts the cursor by delta if that stays in range, returning the vim
+// sync request for the newly-highlighted node (coalesced via requestSync).
+func (m *model) move(delta int) (string, bool) {
+	next := m.cursor + delta
+	if next < 0 || next >= len(m.flat) {
+		return "", false
+	}
+
+	m.cursor = next
+	m.ensureVisible()
+
+	return m.syncCurrent()
+}
+
+// activate is the enter/click action: open a file (forward to vim) or toggle a
+// directory.
+func (m *model) activate() (string, bool) {
+	cur := m.current()
+	if cur == nil {
+		return "", false
+	}
+
+	if !cur.isDir {
+		return m.syncCurrent()
+	}
+
+	if cur.expanded {
+		cur.expanded = false
+	} else {
+		_ = cur.load()
+		cur.expanded = true
+	}
+
+	m.rebuildFlat()
+
+	return "", false
+}
+
 // onKey applies a keystroke. It reports whether to quit and, if a file became
-// current, the path to forward to vim (already coalesced through requestSync).
+// current, the path to forward to vim.
 func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 	switch ev.Key() {
 	case tcell.KeyCtrlC:
 		return true, "", false
 	case tcell.KeyUp:
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureVisible()
-
-			path, ok := m.syncCurrent()
-
-			return false, path, ok
-		}
+		path, ok := m.move(-1)
+		return false, path, ok
 	case tcell.KeyDown:
-		if m.cursor < len(m.flat)-1 {
-			m.cursor++
-			m.ensureVisible()
-
-			path, ok := m.syncCurrent()
-
-			return false, path, ok
-		}
+		path, ok := m.move(1)
+		return false, path, ok
 	case tcell.KeyEnter:
-		cur := m.current()
-		if cur == nil {
-			break
-		}
-
-		if !cur.isDir {
-			path, ok := m.syncCurrent()
-
-			return false, path, ok
-		}
-
-		if cur.expanded {
-			cur.expanded = false
-		} else {
-			_ = cur.load()
-			cur.expanded = true
-		}
-
-		m.rebuildFlat()
+		path, ok := m.activate()
+		return false, path, ok
 	case tcell.KeyRune:
 		switch ev.Str() {
 		case "q":
@@ -86,6 +95,32 @@ func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 	}
 
 	return false, "", false
+}
+
+// onMouse applies a mouse event: the wheel moves the selection one row; a left
+// click selects the clicked row and activates it. A click outside the list and
+// button-release events are no-ops.
+func (m *model) onMouse(ev *tcell.EventMouse) (string, bool) {
+	switch b := ev.Buttons(); {
+	case b&tcell.WheelUp != 0:
+		return m.move(-1)
+	case b&tcell.WheelDown != 0:
+		return m.move(1)
+	case b&tcell.ButtonPrimary != 0:
+		_, y := ev.Position()
+
+		idx := m.scroll + y
+		if y < 0 || y >= m.maxRows() || idx >= len(m.flat) {
+			return "", false
+		}
+
+		m.cursor = idx
+		m.ensureVisible()
+
+		return m.activate()
+	}
+
+	return "", false
 }
 
 func (m *model) onResize(w, h int) {
@@ -392,6 +427,12 @@ func loop(s ui, m model) {
 			}
 
 			draw(s, &m)
+		case *tcell.EventMouse:
+			if path, ok := m.onMouse(ev); ok {
+				startSync(s, m.vim, m.server, path)
+			}
+
+			draw(s, &m)
 		case *syncDoneEvent:
 			if path, ok := m.finishSync(ev.path); ok {
 				startSync(s, m.vim, m.server, path)
@@ -413,6 +454,7 @@ var runProgram = func(m model) error {
 	defer s.Fini()
 
 	s.HideCursor()
+	s.EnableMouse()
 	loop(s, m)
 
 	return nil
