@@ -3,7 +3,7 @@
 [![check](https://github.com/hoffa/vitree/actions/workflows/check.yml/badge.svg)](https://github.com/hoffa/vitree/actions/workflows/check.yml)
 [![release](https://github.com/hoffa/vitree/actions/workflows/release.yml/badge.svg)](https://github.com/hoffa/vitree/actions/workflows/release.yml)
 
-A Vim file browser running in a separate terminal
+A Vim file browser in a separate terminal.
 
 <img width="790" height="560" alt="demo" src="https://github.com/user-attachments/assets/60fcb5df-629a-4446-8569-32f3231c92df" />
 
