@@ -75,8 +75,59 @@ func (m *model) activate() (string, bool) {
 	return "", false
 }
 
+// expand opens the current node: a collapsed directory becomes expanded, a
+// file is forwarded to vim. Already-expanded dirs are a no-op.
+func (m *model) expand() (string, bool) {
+	cur := m.current()
+	if cur == nil {
+		return "", false
+	}
+
+	if !cur.isDir {
+		return m.syncCurrent()
+	}
+
+	if !cur.expanded {
+		_ = cur.load()
+		cur.expanded = true
+
+		m.rebuildFlat()
+	}
+
+	return "", false
+}
+
+// collapse closes the current expanded directory; otherwise it moves the
+// cursor to the parent directory (the nearest shallower entry). At the top
+// level with nothing to collapse it is a no-op.
+func (m *model) collapse() (string, bool) {
+	cur := m.current()
+	if cur == nil {
+		return "", false
+	}
+
+	if cur.isDir && cur.expanded {
+		cur.expanded = false
+
+		m.rebuildFlat()
+
+		return "", false
+	}
+
+	for i := m.cursor - 1; i >= 0; i-- {
+		if m.flat[i].depth == cur.depth-1 {
+			m.cursor = i
+			m.ensureVisible()
+
+			return m.syncCurrent()
+		}
+	}
+
+	return "", false
+}
+
 // onKey applies a keystroke. It reports whether to quit and, if a file became
-// current, the path to forward to vim.
+// current, the path to forward to vim. hjkl mirrors the arrow keys.
 func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 	switch ev.Key() {
 	case tcell.KeyCtrlC:
@@ -87,6 +138,12 @@ func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 	case tcell.KeyDown:
 		path, ok := m.move(1)
 		return false, path, ok
+	case tcell.KeyLeft:
+		path, ok := m.collapse()
+		return false, path, ok
+	case tcell.KeyRight:
+		path, ok := m.expand()
+		return false, path, ok
 	case tcell.KeyEnter:
 		path, ok := m.activate()
 		return false, path, ok
@@ -96,6 +153,18 @@ func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 			return true, "", false
 		case "r":
 			m.refresh()
+		case "k":
+			path, ok := m.move(-1)
+			return false, path, ok
+		case "j":
+			path, ok := m.move(1)
+			return false, path, ok
+		case "h":
+			path, ok := m.collapse()
+			return false, path, ok
+		case "l":
+			path, ok := m.expand()
+			return false, path, ok
 		}
 	}
 

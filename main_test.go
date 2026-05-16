@@ -277,6 +277,74 @@ func TestOnKeyEnter(t *testing.T) {
 	}
 }
 
+func TestOnKeyJK(t *testing.T) {
+	m := newTestModel(t)
+
+	if _, _, _ = m.onKey(ekey(tcell.KeyRune, "j")); m.cursor != 1 {
+		t.Fatalf("j should move down, cursor=%d", m.cursor)
+	}
+
+	if _, _, _ = m.onKey(ekey(tcell.KeyRune, "k")); m.cursor != 0 {
+		t.Fatalf("k should move up, cursor=%d", m.cursor)
+	}
+}
+
+func TestOnKeyExpandCollapse(t *testing.T) {
+	m := newTestModel(t) // cursor 0 = a_dir (collapsed)
+
+	// l / Right expands a collapsed dir.
+	if _, _, ok := m.onKey(ekey(tcell.KeyRune, "l")); ok || !m.current().expanded {
+		t.Fatalf("l on dir: ok=%v expanded=%v", ok, m.current().expanded)
+	}
+
+	if !strings.Contains(strings.Join(names(m.flat), ","), "x.go") {
+		t.Fatalf("expanded children missing: %v", names(m.flat))
+	}
+
+	// l again on an already-expanded dir is a no-op.
+	n := len(m.flat)
+	if _, _, ok := m.onKey(ekey(tcell.KeyRune, "l")); ok || len(m.flat) != n {
+		t.Fatalf("l on expanded dir should be a no-op: ok=%v flat=%d", ok, len(m.flat))
+	}
+
+	// Move onto the child, then h jumps to the parent.
+	m.cursor = fileIndex(m, "x.go")
+	if _, _, _ = m.onKey(ekey(tcell.KeyRune, "h")); m.current().name != "a_dir" {
+		t.Fatalf("h on child should select parent, got %q", m.current().name)
+	}
+
+	// h on the expanded parent collapses it.
+	if _, _, _ = m.onKey(ekey(tcell.KeyLeft, "")); m.current().expanded {
+		t.Fatal("Left on expanded dir should collapse it")
+	}
+
+	if strings.Contains(strings.Join(names(m.flat), ","), "x.go") {
+		t.Fatal("collapsed dir should hide children")
+	}
+
+	// h on a collapsed top-level dir (no shallower parent) is a no-op.
+	before := m.cursor
+	if _, _, ok := m.onKey(ekey(tcell.KeyRune, "h")); ok || m.cursor != before {
+		t.Fatalf("h at top level should be a no-op: ok=%v cursor=%d", ok, m.cursor)
+	}
+
+	// l / Right on a file forwards it to vim.
+	m.cursor = fileIndex(m, "a_file.md")
+	if _, path, ok := m.onKey(ekey(tcell.KeyRight, "")); !ok || path != m.current().path {
+		t.Fatalf("Right on file should sync: ok=%v path=%q", ok, path)
+	}
+
+	// Empty model: collapse/expand with no current node are no-ops.
+	empty := model{root: &node{}}
+	if _, _, ok := empty.onKey(ekey(tcell.KeyRune, "h")); ok {
+		t.Fatal("h with no node should be a no-op")
+	}
+
+	if _, _, ok := empty.onKey(ekey(tcell.KeyRune, "l")); ok {
+		t.Fatal("l with no node should be a no-op")
+	}
+}
+
 func emouse(y int, b tcell.ButtonMask) *tcell.EventMouse {
 	return tcell.NewEventMouse(0, y, b, tcell.ModNone)
 }
