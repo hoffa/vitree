@@ -8,24 +8,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gdamore/tcell/v3"
 	"github.com/mattn/go-runewidth"
 )
 
 type model struct {
-	root        *node
-	flat        []*node
-	cursor      int
-	scroll      int
-	vim         string
-	server      string
-	syncing     bool
-	activePath  string
-	pendingPath string
-	w, h        int
-	rows        []string
+	root   *node
+	flat   []*node
+	cursor int
+	scroll int
+	vim    string
+	server string
+	w, h   int
+	rows   []string
 }
 
 func clamp(v, lo, hi int) int {
@@ -56,9 +52,7 @@ func (m *model) onKey(ev *tcell.EventKey) (bool, string, bool) {
 		}
 
 		if !cur.isDir {
-			path, ok := m.syncCurrent()
-
-			return false, path, ok
+			return false, cur.path, true
 		}
 
 		if cur.expanded {
@@ -166,53 +160,6 @@ func (m *model) current() *node {
 	return m.flat[m.cursor]
 }
 
-// syncCurrent returns the path to forward to vim for the highlighted node, or
-// ok=false when it is a directory / nothing is selected.
-func (m *model) syncCurrent() (string, bool) {
-	cur := m.current()
-	if cur == nil || cur.isDir {
-		m.pendingPath = ""
-		return "", false
-	}
-
-	return m.requestSync(cur.path)
-}
-
-// requestSync coalesces vim forwarding: only one vim exec runs at a time. While
-// one is in flight the latest requested path is remembered and returned by
-// finishSync once the running one completes, so flying through files collapses
-// to the last. ok=true means the caller should start the exec now.
-func (m *model) requestSync(path string) (string, bool) {
-	if m.syncing {
-		if path == m.activePath {
-			m.pendingPath = ""
-		} else {
-			m.pendingPath = path
-		}
-
-		return "", false
-	}
-
-	m.syncing = true
-	m.activePath = path
-
-	return path, true
-}
-
-func (m *model) finishSync(donePath string) (string, bool) {
-	m.syncing = false
-	m.activePath = ""
-
-	pending := m.pendingPath
-	m.pendingPath = ""
-
-	if pending == "" || pending == donePath {
-		return "", false
-	}
-
-	return m.requestSync(pending)
-}
-
 // refresh re-reads the tree from disk, preserving expansion and the cursor's
 // file. It is synchronous and bound to `r`; there is no background refresh.
 func (m *model) refresh() {
@@ -280,15 +227,6 @@ func newModel(vim, server, path string) (model, error) {
 	return m, nil
 }
 
-// syncDoneEvent is posted to the tcell loop by the background vim exec started
-// in startSync, so completion is handled on the single UI goroutine.
-type syncDoneEvent struct {
-	at   time.Time
-	path string
-}
-
-func (e *syncDoneEvent) When() time.Time { return e.at }
-
 // ui is the slice of tcell.Screen the render loop needs. Kept narrow so it can
 // be faked in tests — tcell v3 removed the public SimulationScreen.
 type ui interface {
@@ -299,15 +237,10 @@ type ui interface {
 	EventQ() chan tcell.Event
 }
 
-func startSync(s ui, vim, server, path string) {
-	go func() {
-		_ = openInVim(vim, server, path)
-
-		// EventQ is closed on shutdown; a send racing Fini would panic.
-		defer func() { _ = recover() }()
-
-		s.EventQ() <- &syncDoneEvent{at: time.Now(), path: path}
-	}()
+// startSync forwards path to vim off the UI goroutine. Fire-and-forget: sync is
+// a deliberate single keypress now, so there's nothing to coalesce or report.
+func startSync(vim, server, path string) {
+	go func() { _ = openInVim(vim, server, path) }()
 }
 
 // drawRow writes one screen row and pads it to full width with spaces in the
@@ -381,14 +314,10 @@ func loop(s ui, m model) {
 			}
 
 			if ok {
-				startSync(s, m.vim, m.server, path)
+				startSync(m.vim, m.server, path)
 			}
 
 			draw(s, &m)
-		case *syncDoneEvent:
-			if path, ok := m.finishSync(ev.path); ok {
-				startSync(s, m.vim, m.server, path)
-			}
 		}
 	}
 }

@@ -235,9 +235,8 @@ func TestOnKeyMove(t *testing.T) {
 	}
 
 	// Moving onto a file must NOT sync — only enter does.
-	if _, path, ok := m.onKey(ekey(tcell.KeyDown, "")); m.cursor != 2 || ok || path != "" || m.syncing {
-		t.Fatalf("down onto file should not sync: cursor=%d ok=%v path=%q syncing=%v",
-			m.cursor, ok, path, m.syncing)
+	if _, path, ok := m.onKey(ekey(tcell.KeyDown, "")); m.cursor != 2 || ok || path != "" {
+		t.Fatalf("down onto file should not sync: cursor=%d ok=%v path=%q", m.cursor, ok, path)
 	}
 
 	m.cursor = len(m.flat) - 1
@@ -447,56 +446,6 @@ func TestCurrentOutOfRange(t *testing.T) {
 	m.cursor = len(m.flat)
 	if m.current() != nil {
 		t.Fatal("overflow cursor should be nil")
-	}
-}
-
-func TestSyncCoalesce(t *testing.T) {
-	m := newTestModel(t)
-	aFile := fileIndex(m, "a_file.md")
-	zFile := fileIndex(m, "z_file.txt")
-
-	m.cursor = aFile
-
-	path, ok := m.syncCurrent()
-	if !ok || !m.syncing || path != m.current().path || m.pendingPath != "" {
-		t.Fatalf("first sync should start: ok=%v syncing=%v path=%q", ok, m.syncing, path)
-	}
-
-	active := m.activePath
-
-	m.cursor = zFile
-	if _, ok := m.syncCurrent(); ok || m.pendingPath == "" || m.pendingPath == active {
-		t.Fatalf("in-flight move should only set pending: ok=%v pending=%q", ok, m.pendingPath)
-	}
-
-	m.cursor = aFile // back to active
-	if _, ok := m.syncCurrent(); ok || m.pendingPath != "" {
-		t.Fatalf("return to active should clear pending: ok=%v pending=%q", ok, m.pendingPath)
-	}
-
-	m.cursor = zFile
-	m.syncCurrent() // pending = z again
-
-	next, ok := m.finishSync(m.flat[aFile].path)
-	if !ok || !m.syncing || next != m.flat[zFile].path {
-		t.Fatalf("completion should start follow-up: ok=%v next=%q", ok, next)
-	}
-
-	if _, ok := m.finishSync(m.flat[zFile].path); ok || m.syncing || m.pendingPath != "" {
-		t.Fatalf("queue should drain clean: ok=%v syncing=%v pending=%q", ok, m.syncing, m.pendingPath)
-	}
-}
-
-func TestSyncCurrentOnDir(t *testing.T) {
-	m := newTestModel(t)
-	m.pendingPath = "/stale"
-
-	if _, ok := m.syncCurrent(); ok { // cursor 0 = a_dir
-		t.Fatal("dir selection should not sync")
-	}
-
-	if m.pendingPath != "" {
-		t.Fatalf("pending should be cleared, got %q", m.pendingPath)
 	}
 }
 
@@ -732,17 +681,21 @@ func TestDraw(t *testing.T) {
 }
 
 func TestStartSync(t *testing.T) {
-	s := newFakeScreen(10, 10)
-	startSync(s, writeFakeVim(t, `exit 0`), "S", "/some/path")
+	marker := filepath.Join(t.TempDir(), "opened")
+	startSync(writeFakeVim(t, "touch "+marker), "S", "/some/path")
 
-	select {
-	case ev := <-s.q:
-		sd, ok := ev.(*syncDoneEvent)
-		if !ok || sd.path != "/some/path" {
-			t.Fatalf("unexpected event %#v", ev)
+	deadline := time.After(2 * time.Second)
+
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			return
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no syncDoneEvent posted")
+
+		select {
+		case <-deadline:
+			t.Fatal("startSync did not exec vim")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
@@ -757,9 +710,7 @@ func TestLoop(t *testing.T) {
 
 	s.q <- ekey(tcell.KeyDown, "") // a_file.md (movement: no sync)
 
-	s.q <- ekey(tcell.KeyEnter, "") // open a_file.md -> startSync
-
-	s.q <- &syncDoneEvent{at: time.Now(), path: "/x"}
+	s.q <- ekey(tcell.KeyEnter, "") // open a_file.md -> startSync (fire-and-forget)
 
 	s.q <- ekey(tcell.KeyRune, "z") // unknown
 
