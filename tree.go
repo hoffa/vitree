@@ -86,6 +86,15 @@ func (n *node) load() error {
 	n.children = childrenFrom(n, entries)
 	n.loaded = true
 
+	// git can't re-include anything under an ignored directory, so an
+	// interactively-expanded ignored dir's children are ignored immediately —
+	// no need to wait for the next batched check-ignore.
+	if n.ignored {
+		for _, c := range n.children {
+			c.ignored = true
+		}
+	}
+
 	return nil
 }
 
@@ -153,7 +162,9 @@ func buildTree(rootPath string, expanded map[string]bool) (*node, error) {
 
 	ignored := gitIgnored(rootPath, paths)
 
-	root.walk(func(n *node) { n.ignored = ignored[n.path] })
+	// .git is excluded by git implicitly (check-ignore never reports it), but
+	// it is plumbing you don't browse, so dim it like ignored entries.
+	root.walk(func(n *node) { n.ignored = ignored[n.path] || n.name == ".git" })
 
 	return root, nil
 }

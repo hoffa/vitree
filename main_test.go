@@ -785,7 +785,7 @@ func TestGitIgnored(t *testing.T) {
 func TestBuildTreeMarksIgnored(t *testing.T) {
 	root := mkGitignoredTree(t)
 
-	r, err := buildTree(root, map[string]bool{root: true})
+	r, err := buildTree(root, map[string]bool{root: true, filepath.Join(root, "build"): true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -794,8 +794,34 @@ func TestBuildTreeMarksIgnored(t *testing.T) {
 
 	r.walk(func(n *node) { got[n.name] = n.ignored })
 
-	if got["keep.txt"] || !got["ignored.log"] || !got["build"] {
+	// keep.txt clean; *.log and build/ ignored; out.txt ignored via its
+	// ignored parent; .git always dimmed.
+	if got["keep.txt"] || !got["ignored.log"] || !got["build"] || !got["out.txt"] || !got[".git"] {
 		t.Fatalf("ignored flags wrong: %v", got)
+	}
+}
+
+func TestLoadInheritsIgnored(t *testing.T) {
+	root := mkTree(t) // no git needed: pure inheritance
+
+	n, err := newNode(filepath.Join(root, "a_dir"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n.ignored = true
+	if err := n.load(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(n.children) == 0 {
+		t.Fatal("expected children")
+	}
+
+	for _, c := range n.children {
+		if !c.ignored {
+			t.Fatalf("child %q under an ignored dir must be ignored", c.name)
+		}
 	}
 }
 
