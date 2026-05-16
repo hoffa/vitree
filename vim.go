@@ -50,7 +50,7 @@ func detectVimServer(vim string) (string, error) {
 
 	switch len(servers) {
 	case 0:
-		return "", errors.New("no vim server running — start vim with --servername first")
+		return "", errors.New("no vim server running - start vim with --servername first")
 	case 1:
 		return servers[0], nil
 	default:

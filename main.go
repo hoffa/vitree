@@ -6,26 +6,18 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	selectedStyle = lipgloss.NewStyle().Reverse(true)
-	dimStyle      = lipgloss.NewStyle().Faint(true)
-	boldStyle     = lipgloss.NewStyle().Bold(true)
-	redStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	greenStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	yellowStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	blueStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-)
+// selectedStyle is the only styling vitree applies: reverse video on the
+// highlighted row. No colors, no bold anywhere else.
+var selectedStyle = lipgloss.NewStyle().Reverse(true)
 
 type node struct {
 	path     string
@@ -47,38 +39,11 @@ type model struct {
 	server      string
 	err         string
 	help        bool
-	filter      filterMode
-	refreshing  bool
 	syncing     bool
 	activePath  string
 	pendingPath string
-	gitStatus   map[string]string
-	gitRoot     string
 	w, h        int
-}
-
-type filterMode int
-
-const (
-	filterDefault filterMode = iota
-	filterChanged
-	filterAll
-)
-
-type autoRefreshTickMsg struct{}
-
-type refreshResultMsg struct {
-	root      *node
-	gitStatus map[string]string
-	err       error
-}
-
-const autoRefreshInterval = 2 * time.Second
-
-func autoRefreshTick() tea.Cmd {
-	return tea.Tick(autoRefreshInterval, func(time.Time) tea.Msg {
-		return autoRefreshTickMsg{}
-	})
+	rows        []string
 }
 
 func newNode(path string, depth int, parent *node) (*node, error) {
@@ -104,7 +69,7 @@ func (n *node) walk(fn func(*node)) {
 	}
 }
 
-func (n *node) load(hideIgnored bool) error {
+func (n *node) load() error {
 	if !n.isDir || n.loaded {
 		return nil
 	}
@@ -114,24 +79,13 @@ func (n *node) load(hideIgnored bool) error {
 		return err
 	}
 
-	var ignored map[string]bool
-
-	if hideIgnored {
-		abs := make([]string, len(entries))
-		for i, e := range entries {
-			abs[i] = filepath.Join(n.path, e.Name())
-		}
-
-		ignored, _ = gitCheckIgnore(n.path, abs)
-	}
-
-	n.children = childrenFrom(n, entries, ignored, hideIgnored)
+	n.children = childrenFrom(n, entries)
 	n.loaded = true
 
 	return nil
 }
 
-func childrenFrom(parent *node, entries []os.DirEntry, ignored map[string]bool, hideIgnored bool) []*node {
+func childrenFrom(parent *node, entries []os.DirEntry) []*node {
 	sort.Slice(entries, func(i, j int) bool {
 		di, dj := entries[i].IsDir(), entries[j].IsDir()
 		if di != dj {
@@ -145,13 +99,6 @@ func childrenFrom(parent *node, entries []os.DirEntry, ignored map[string]bool, 
 
 	for _, e := range entries {
 		abs := filepath.Join(parent.path, e.Name())
-		if ignored[abs] {
-			continue
-		}
-
-		if hideIgnored && e.Name() == ".git" && e.IsDir() {
-			continue
-		}
 
 		c, err := newNode(abs, parent.depth+1, parent)
 		if err != nil {
@@ -169,29 +116,16 @@ func clamp(v, lo, hi int) int {
 }
 
 func (m model) Init() tea.Cmd {
-	return autoRefreshTick()
+	return nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+		m.renderRows()
 	case vimSyncDoneMsg:
 		return m, m.finishSync(msg)
-	case autoRefreshTickMsg:
-		if m.refreshing {
-			return m, autoRefreshTick()
-		}
-
-		m.refreshing = true
-
-		return m, tea.Batch(m.asyncRefreshCmd(), autoRefreshTick())
-	case refreshResultMsg:
-		m.applyRefresh(msg)
-
-		return m, nil
-	case tea.MouseMsg:
-		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		if m.help {
 			m.help = false
@@ -207,17 +141,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "?":
 			m.help = true
-		case "f":
-			m.filter = (m.filter + 1) % 3
-			m.err = ""
-
-			if m.refreshing {
-				return m, nil
-			}
-
-			m.refreshing = true
-
-			return m, m.asyncRefreshCmd()
+		case "r":
+			m.refresh()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -232,16 +157,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				return m, m.syncCurrent()
 			}
-		case "g":
-			m.cursor = 0
-			m.ensureVisible()
-
-			return m, m.syncCurrent()
-		case "G":
-			m.cursor = max(0, len(m.flat)-1)
-			m.ensureVisible()
-
-			return m, m.syncCurrent()
 		case "left", "h":
 			cur := m.current()
 			if cur == nil {
@@ -270,7 +185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 
-			if err := cur.load(m.hideIgnored()); err != nil {
+			if err := cur.load(); err != nil {
 				m.err = "error: " + err.Error()
 			}
 
@@ -290,7 +205,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cur.expanded {
 				cur.expanded = false
 			} else {
-				if err := cur.load(m.hideIgnored()); err != nil {
+				if err := cur.load(); err != nil {
 					m.err = "error: " + err.Error()
 				}
 
@@ -317,57 +232,9 @@ func (m model) View() string {
 	rendered := 0
 
 	for i := start; i < end; i++ {
-		n := m.flat[i]
-		indent := strings.Repeat("  ", n.depth-1)
-
-		var marker, suffix string
-
-		if n.isDir {
-			if n.expanded {
-				marker = "▼ "
-			} else {
-				marker = "▶ "
-			}
-
-			suffix = "/"
-		} else {
-			marker = "  "
-		}
-
-		raw := indent + marker + n.name + suffix
-
-		gitMark := m.gitStatus[n.path]
-		if gitMark != "" {
-			raw += " " + gitMark
-		}
-
-		truncated := false
-
-		if m.w > 0 && lipgloss.Width(raw) > m.w {
-			raw = truncateRight(raw, m.w)
-			truncated = true
-		}
-
-		var line string
-
-		switch {
-		case i == m.cursor:
-			line = selectedStyle.Width(m.w).Render(raw)
-		case truncated:
-			line = raw
-		default:
-			styled := indent
-			if n.isDir {
-				styled += blueStyle.Render(marker + n.name + suffix)
-			} else {
-				styled += marker + n.name + suffix
-			}
-
-			if gitMark != "" {
-				styled += " " + gitColor(gitMark).Render(gitMark)
-			}
-
-			line = styled
+		line := m.rows[i]
+		if i == m.cursor {
+			line = selectedStyle.Width(m.w).Render(line)
 		}
 
 		b.WriteString(line + "\n")
@@ -378,38 +245,53 @@ func (m model) View() string {
 	gap := max(0, m.h-rendered-1)
 	b.WriteString(strings.Repeat("\n", gap))
 
-	leftRaw := m.root.path + "/"
-	leftStyle := dimStyle
-
+	left := m.root.path + "/"
 	if m.err != "" {
-		leftRaw = m.err
-		if strings.HasPrefix(m.err, "error:") {
-			leftStyle = redStyle
-		}
+		left = m.err
 	}
 
 	right := "? help"
+	rightWidth := lipgloss.Width(right)
 
-	switch m.filter {
-	case filterChanged:
-		right = "changed only · " + right
-	case filterAll:
-		right = "showing all · " + right
-	}
-
-	rightStyled := dimStyle.Render(right)
-	rightWidth := lipgloss.Width(rightStyled)
-
-	leftRaw = truncateLeft(leftRaw, max(0, m.w-rightWidth-1))
-	leftStyled := leftStyle.Render(leftRaw)
-	pad := max(1, m.w-lipgloss.Width(leftStyled)-rightWidth)
-	b.WriteString(leftStyled + strings.Repeat(" ", pad) + rightStyled)
+	left = truncateLeft(left, max(0, m.w-rightWidth-1))
+	pad := max(1, m.w-lipgloss.Width(left)-rightWidth)
+	b.WriteString(left + strings.Repeat(" ", pad) + right)
 
 	return b.String()
 }
 
-func (m model) hideIgnored() bool { return m.gitRoot != "" && m.filter != filterAll }
-func (m model) changedOnly() bool { return m.filter == filterChanged }
+// renderRows rebuilds the m.rows display cache from m.flat. It is the only
+// place row text is built/truncated, so it must be called whenever the tree or
+// terminal width changes. View() then reads the cache and only applies the
+// cursor overlay, keeping a held cursor move O(1).
+func (m *model) renderRows() {
+	m.rows = make([]string, len(m.flat))
+
+	for i, n := range m.flat {
+		indent := strings.Repeat("  ", n.depth-1)
+
+		marker := "  "
+		suffix := ""
+
+		if n.isDir {
+			if n.expanded {
+				marker = "- "
+			} else {
+				marker = "+ "
+			}
+
+			suffix = "/"
+		}
+
+		row := indent + marker + n.name + suffix
+
+		if m.w > 0 && lipgloss.Width(row) > m.w {
+			row = truncateRight(row, m.w)
+		}
+
+		m.rows[i] = row
+	}
+}
 
 func truncateLeft(s string, maxWidth int) string {
 	runes := []rune(s)
@@ -417,11 +299,11 @@ func truncateLeft(s string, maxWidth int) string {
 		return s
 	}
 
-	if maxWidth < 1 {
+	if maxWidth < 3 {
 		return ""
 	}
 
-	return "…" + string(runes[len(runes)-maxWidth+1:])
+	return "..." + string(runes[len(runes)-maxWidth+3:])
 }
 
 func truncateRight(s string, maxWidth int) string {
@@ -439,12 +321,8 @@ func (m *model) rebuildFlat() {
 	var walk func(n *node)
 
 	walk = func(n *node) {
-		if m.changedOnly() && m.gitStatus[n.path] == "" {
-			return
-		}
-
 		m.flat = append(m.flat, n)
-		if n.isDir && (n.expanded || m.changedOnly()) {
+		if n.isDir && n.expanded {
 			for _, c := range n.children {
 				walk(c)
 			}
@@ -456,6 +334,7 @@ func (m *model) rebuildFlat() {
 
 	m.cursor = clamp(m.cursor, 0, len(m.flat)-1)
 	m.ensureVisible()
+	m.renderRows()
 }
 
 func (m *model) maxRows() int {
@@ -483,66 +362,6 @@ func (m *model) ensureVisible() {
 	m.scroll = clamp(m.scroll, 0, max(0, len(m.flat)-mr))
 }
 
-func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.help {
-		m.help = false
-		return *m, nil
-	}
-
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureVisible()
-
-			return *m, m.syncCurrent()
-		}
-	case tea.MouseButtonWheelDown:
-		if m.cursor < len(m.flat)-1 {
-			m.cursor++
-			m.ensureVisible()
-
-			return *m, m.syncCurrent()
-		}
-	case tea.MouseButtonLeft:
-		if msg.Action != tea.MouseActionPress {
-			return *m, nil
-		}
-
-		if msg.Y < 0 || msg.Y >= m.maxRows() {
-			return *m, nil
-		}
-
-		idx := m.scroll + msg.Y
-		if idx < 0 || idx >= len(m.flat) {
-			return *m, nil
-		}
-
-		m.cursor = idx
-
-		cur := m.flat[idx]
-		if cur.isDir {
-			if cur.expanded {
-				cur.expanded = false
-			} else {
-				if err := cur.load(m.hideIgnored()); err != nil {
-					m.err = "error: " + err.Error()
-				}
-
-				cur.expanded = true
-			}
-
-			m.rebuildFlat()
-
-			return *m, nil
-		}
-
-		return *m, m.syncCurrent()
-	}
-
-	return *m, nil
-}
-
 func (m *model) current() *node {
 	if m.cursor < 0 || m.cursor >= len(m.flat) {
 		return nil
@@ -561,6 +380,9 @@ func (m *model) syncCurrent() tea.Cmd {
 	return m.requestSync(cur.path)
 }
 
+// requestSync forwards path to vim, but only one vim exec runs at a time. While
+// one is in flight, the latest requested path is remembered and fired once the
+// running one completes, so flying through files coalesces to the last.
 func (m *model) requestSync(path string) tea.Cmd {
 	if m.syncing {
 		if path == m.activePath {
@@ -600,32 +422,27 @@ func (m *model) finishSync(msg vimSyncDoneMsg) tea.Cmd {
 	return m.requestSync(pending)
 }
 
-func (m model) asyncRefreshCmd() tea.Cmd {
-	rootPath := m.root.path
-	gitRoot := m.gitRoot
-	hideIgnored := m.hideIgnored()
-	changedOnly := m.changedOnly()
+// refresh re-reads the tree from disk, preserving expansion and the cursor's
+// file. It is synchronous and bound to `r`; there is no background refresh.
+func (m *model) refresh() {
 	expanded := m.expandedPaths()
 
-	return func() tea.Msg {
-		gs := gitStatusFromRoot(gitRoot)
-
-		load := expanded
-
-		if changedOnly {
-			load = maps.Clone(expanded)
-			for p := range gs {
-				load[p] = true
-			}
-		}
-
-		root, err := buildTree(rootPath, load, expanded, hideIgnored)
-		if err != nil {
-			return refreshResultMsg{err: err}
-		}
-
-		return refreshResultMsg{root: root, gitStatus: gs}
+	root, err := buildTree(m.root.path, expanded)
+	if err != nil {
+		m.err = "error: " + err.Error()
+		return
 	}
+
+	var cursorPath string
+	if cur := m.current(); cur != nil {
+		cursorPath = cur.path
+	}
+
+	m.root = root
+	m.err = ""
+
+	m.rebuildFlat()
+	m.restoreCursor(cursorPath)
 }
 
 func (m model) expandedPaths() map[string]bool {
@@ -640,10 +457,9 @@ func (m model) expandedPaths() map[string]bool {
 	return expanded
 }
 
-// buildTree reads the directory tree at rootPath, including any subdirs in
-// `expanded`, and returns it with one batched `git check-ignore` call instead
-// of forking once per directory.
-func buildTree(rootPath string, load, expanded map[string]bool, hideIgnored bool) (*node, error) {
+// buildTree reads the directory tree at rootPath plus every directory in
+// expanded, marking those expanded.
+func buildTree(rootPath string, expanded map[string]bool) (*node, error) {
 	root, err := newNode(rootPath, 0, nil)
 	if err != nil {
 		return nil, err
@@ -656,7 +472,7 @@ func buildTree(rootPath string, load, expanded map[string]bool, hideIgnored bool
 
 	scanned := map[string][]os.DirEntry{rootPath: rootEntries}
 
-	for path := range load {
+	for path := range expanded {
 		if path == rootPath {
 			continue
 		}
@@ -669,20 +485,6 @@ func buildTree(rootPath string, load, expanded map[string]bool, hideIgnored bool
 		scanned[path] = entries
 	}
 
-	var ignored map[string]bool
-
-	if hideIgnored {
-		var all []string
-
-		for dirPath, entries := range scanned {
-			for _, e := range entries {
-				all = append(all, filepath.Join(dirPath, e.Name()))
-			}
-		}
-
-		ignored, _ = gitCheckIgnore(rootPath, all)
-	}
-
 	var build func(*node)
 
 	build = func(n *node) {
@@ -691,7 +493,7 @@ func buildTree(rootPath string, load, expanded map[string]bool, hideIgnored bool
 			return
 		}
 
-		n.children = childrenFrom(n, entries, ignored, hideIgnored)
+		n.children = childrenFrom(n, entries)
 		n.loaded = true
 
 		for _, c := range n.children {
@@ -715,40 +517,6 @@ func buildTree(rootPath string, load, expanded map[string]bool, hideIgnored bool
 	return root, nil
 }
 
-func (m *model) applyRefresh(msg refreshResultMsg) {
-	m.refreshing = false
-
-	if msg.err != nil {
-		m.err = "error: " + msg.err.Error()
-		return
-	}
-
-	nowExpanded := map[string]bool{}
-
-	m.root.walk(func(n *node) {
-		if n.isDir && n.expanded {
-			nowExpanded[n.path] = true
-		}
-	})
-
-	msg.root.walk(func(n *node) {
-		if n.isDir && nowExpanded[n.path] && !n.expanded {
-			n.expanded = true
-		}
-	})
-
-	var cursorPath string
-	if cur := m.current(); cur != nil {
-		cursorPath = cur.path
-	}
-
-	m.root = msg.root
-	m.gitStatus = msg.gitStatus
-
-	m.rebuildFlat()
-	m.restoreCursor(cursorPath)
-}
-
 func (m *model) restoreCursor(path string) {
 	if path == "" {
 		return
@@ -767,27 +535,18 @@ func (m *model) restoreCursor(path string) {
 	m.ensureVisible()
 }
 
-func (m *model) loadGitStatus() {
-	if m.gitRoot == "" {
-		m.gitRoot, _ = gitRepoRoot(m.root.path)
-	}
-
-	m.gitStatus = gitStatusFromRoot(m.gitRoot)
-}
-
 func (m model) helpView() string {
-	body := boldStyle.Render("keys") + `
-  ↑ ↓        j k     move
-  ← →        h l     collapse · expand
-  g G                jump to top · bottom
-  ⏎                  toggle dir · open file
-  f                  cycle filter: default → changed only → show all
-  ?                  toggle this help
-  q                  quit
+	body := `keys
+  up down       j k     move
+  left right    h l     collapse  expand
+  enter                 toggle dir  open file
+  r                     refresh
+  ?                     toggle this help
+  q                     quit
 
-` + boldStyle.Render("vim server") + `
+vim server
   ` + m.server
-	hint := dimStyle.Render("press any key to close")
+	hint := "press any key to close"
 	gap := max(0, m.h-strings.Count(body, "\n")-2)
 	pad := max(0, m.w-lipgloss.Width(hint))
 
@@ -822,23 +581,20 @@ func newModel(vim, server, path string) (model, error) {
 		return model{}, errors.New("root must be a directory")
 	}
 
-	gitRoot, _ := gitRepoRoot(abs)
-
-	m := model{root: root, server: server, vim: vim, gitRoot: gitRoot}
-	if err := root.load(m.hideIgnored()); err != nil {
+	m := model{root: root, server: server, vim: vim}
+	if err := root.load(); err != nil {
 		return model{}, err
 	}
 
 	root.expanded = true
 
 	m.rebuildFlat()
-	m.loadGitStatus()
 
 	return m, nil
 }
 
 var runProgram = func(m tea.Model) error {
-	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
 
