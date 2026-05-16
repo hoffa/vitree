@@ -9,15 +9,7 @@ A Vim file browser in a separate terminal.
 
 ## Why
 
-In-editor file trees mean learning another set of bindings for resizing, splitting, and focus. `vitree` skips that — it's just a terminal you can put wherever you want.
-
-## Features
-
-- Moving the selection forwards the highlighted file to a running Vim server
-- Async TUI with no scroll lag
-- Vim-style (`hjkl`), arrow, and mouse navigation
-- Background auto-refresh (configurable)
-- Dims `.gitignore`d files and `.git`
+No need to learn Vim window management.
 
 ## Install
 
