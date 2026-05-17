@@ -55,10 +55,10 @@ hidden.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, `↓` / `↑` | move selection |
-| `l` / `→` | expand directory, or open file |
+| `j` / `k`, `↓` / `↑` | move selection (opens the file under it in Vim) |
+| `l` / `→` | expand directory |
 | `h` / `←` | collapse directory, or go to parent |
-| `Enter` | toggle directory / open file |
+| `Enter` | toggle directory |
 | `r` | refresh now |
 | `q` / `Ctrl-C` | quit |
 
