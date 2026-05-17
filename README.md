@@ -5,7 +5,7 @@
 
 A Vim file browser in a separate terminal.
 
-<img width="700" height="500" alt="demo" src="https://github.com/user-attachments/assets/65d68896-a114-4022-a3f6-e7fb463cd1a8" />
+<img width="700" height="500" alt="demo" src="https://github.com/user-attachments/assets/7e3b8f05-3362-45ed-8a89-6f4dd91aadf6" />
 
 ## Why
 
