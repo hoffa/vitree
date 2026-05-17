@@ -302,11 +302,11 @@ func TestOnKeyEnter(t *testing.T) {
 		t.Fatal("enter again should collapse")
 	}
 
+	// Enter on a file does nothing: it is already open from selection.
 	m.cursor = fileIndex(m, "a_file.md")
 
-	_, path, ok := m.onKey(ekey(tcell.KeyEnter, ""))
-	if !ok || path != m.current().path {
-		t.Fatalf("enter on file should sync: ok=%v path=%q", ok, path)
+	if _, path, ok := m.onKey(ekey(tcell.KeyEnter, "")); ok || path != "" {
+		t.Fatalf("enter on file should be a no-op: ok=%v path=%q", ok, path)
 	}
 
 	empty := model{root: &node{}}
@@ -366,10 +366,10 @@ func TestOnKeyExpandCollapse(t *testing.T) {
 		t.Fatalf("h at top level should be a no-op: ok=%v cursor=%d", ok, m.cursor)
 	}
 
-	// l / Right on a file forwards it to vim.
+	// l / Right on a file does nothing: it is already open from selection.
 	m.cursor = fileIndex(m, "a_file.md")
-	if _, path, ok := m.onKey(ekey(tcell.KeyRight, "")); !ok || path != m.current().path {
-		t.Fatalf("Right on file should sync: ok=%v path=%q", ok, path)
+	if _, path, ok := m.onKey(ekey(tcell.KeyRight, "")); ok || path != "" {
+		t.Fatalf("Right on file should be a no-op: ok=%v path=%q", ok, path)
 	}
 
 	// Empty model: collapse/expand with no current node are no-ops.

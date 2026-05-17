@@ -51,16 +51,13 @@ func (m *model) move(delta int) (string, bool) {
 	return m.syncCurrent()
 }
 
-// activate is the enter/click action: open a file (forward to vim) or toggle a
-// directory.
+// activate is the enter/click action: toggle a directory. Files are already
+// opened in vim the moment the selection lands on them (see move), so there is
+// nothing extra to do for a file here.
 func (m *model) activate() (string, bool) {
 	cur := m.current()
-	if cur == nil {
+	if cur == nil || !cur.isDir {
 		return "", false
-	}
-
-	if !cur.isDir {
-		return m.syncCurrent()
 	}
 
 	if cur.expanded {
@@ -75,24 +72,18 @@ func (m *model) activate() (string, bool) {
 	return "", false
 }
 
-// expand opens the current node: a collapsed directory becomes expanded, a
-// file is forwarded to vim. Already-expanded dirs are a no-op.
+// expand opens a collapsed directory. Files are already opened in vim on
+// selection (see move); an already-expanded dir is a no-op.
 func (m *model) expand() (string, bool) {
 	cur := m.current()
-	if cur == nil {
+	if cur == nil || !cur.isDir || cur.expanded {
 		return "", false
 	}
 
-	if !cur.isDir {
-		return m.syncCurrent()
-	}
+	_ = cur.load()
+	cur.expanded = true
 
-	if !cur.expanded {
-		_ = cur.load()
-		cur.expanded = true
-
-		m.rebuildFlat()
-	}
+	m.rebuildFlat()
 
 	return "", false
 }
@@ -193,7 +184,13 @@ func (m *model) onMouse(ev *tcell.EventMouse) (string, bool) {
 		m.cursor = idx
 		m.ensureVisible()
 
-		return m.activate()
+		// Clicking selects the row: a file opens (like moving onto it), a
+		// directory toggles.
+		if cur := m.current(); cur != nil && cur.isDir {
+			return m.activate()
+		}
+
+		return m.syncCurrent()
 	}
 
 	return "", false
