@@ -1028,8 +1028,12 @@ func TestDrawColorsDirs(t *testing.T) {
 		t.Fatal("selected dir row should be reverse video")
 	}
 
-	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg != color.Navy {
-		t.Fatalf("selected dir row fg=%v want navy", fg)
+	if bg := s.styles[[2]int{0, 0}].GetBackground(); bg != color.Navy {
+		t.Fatalf("selected dir row bg=%v want navy before reverse", bg)
+	}
+
+	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg == color.Navy {
+		t.Fatal("selected dir row foreground should not be navy before reverse")
 	}
 }
 
