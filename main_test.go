@@ -848,8 +848,8 @@ func TestNewModel(t *testing.T) {
 		t.Fatalf("newModel detect: %v", err)
 	}
 
-	if _, err := newModel(writeFakeVim(t, `echo ""`), "", dir); err == nil {
-		t.Fatal("expected detect error (no servers)")
+	if _, err := newModel(writeFakeVim(t, `echo ""`), "", dir); err != nil {
+		t.Fatalf("newModel with no servers should fall back to default: %v", err)
 	}
 
 	if _, err := newModel(vim, "S", filepath.Join(dir, "z_file.txt")); err == nil {
@@ -926,8 +926,8 @@ func TestDetectVimServer(t *testing.T) {
 		t.Fatalf("single: got=%q err=%v", got, err)
 	}
 
-	if _, err := detectVimServer(writeFakeVim(t, `echo ""`)); err == nil {
-		t.Fatal("expected error for no servers")
+	if got, err := detectVimServer(writeFakeVim(t, `echo ""`)); err != nil || got != defaultServer {
+		t.Fatalf("no servers: got=%q err=%v, want %q", got, err, defaultServer)
 	}
 
 	if _, err := detectVimServer(writeFakeVim(t, `echo "A"; echo "B"`)); err == nil {
