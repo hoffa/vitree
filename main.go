@@ -491,20 +491,25 @@ func draw(s ui, m *model) {
 	y := 0
 
 	for i := start; i < end; i++ {
-		// Apply file kind first, then overlay the cursor with reverse video so
-		// selected rows still reveal whether they are dirs, ignored, or files.
+		// For selected rows, put semantic colors on the background before
+		// Reverse(true), so the reversed foreground matches the unselected color.
 		n := m.flat[i]
+		selected := i == m.cursor
 		st := tcell.StyleDefault
 
 		if n.isDir {
-			st = st.Foreground(color.Navy)
+			if selected {
+				st = st.Background(color.Navy)
+			} else {
+				st = st.Foreground(color.Navy)
+			}
 		}
 
 		if n.ignored {
 			st = st.Dim(true)
 		}
 
-		if i == m.cursor {
+		if selected {
 			st = st.Reverse(true)
 		}
 
