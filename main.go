@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -491,15 +492,22 @@ func draw(s ui, m *model) {
 
 	for i := start; i < end; i++ {
 		// Order matters: the selected row is always plain reverse video, even
-		// if it is itself gitignored — reverse wins over dim so the cursor
-		// never looks washed out.
+		// if it is itself a blue directory or gitignored — reverse wins over
+		// blue/dim so the cursor never looks washed out. Otherwise directories
+		// are blue, and an ignored entry is dimmed on top (a dimmed blue dir).
+		n := m.flat[i]
 		st := tcell.StyleDefault
 
-		switch {
-		case i == m.cursor:
+		if i == m.cursor {
 			st = st.Reverse(true)
-		case m.flat[i].ignored:
-			st = st.Dim(true)
+		} else {
+			if n.isDir {
+				st = st.Foreground(color.Blue)
+			}
+
+			if n.ignored {
+				st = st.Dim(true)
+			}
 		}
 
 		drawRow(s, y, m.rows[i], w, st)

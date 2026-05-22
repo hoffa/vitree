@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 )
 
 func mkTree(t *testing.T) string {
@@ -1000,6 +1001,35 @@ func TestDrawDimsIgnored(t *testing.T) {
 
 	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() || st.HasDim() {
 		t.Fatalf("selected ignored row: reverse=%v dim=%v", st.HasReverse(), st.HasDim())
+	}
+}
+
+func TestDrawColorsDirs(t *testing.T) {
+	m := newTestModel(t) // a_dir, b_dir (dirs), a_file.md, z_file.txt (files)
+	m.cursor = 2         // keep the cursor off the dirs we assert on
+
+	s := newFakeScreen(30, 10)
+	m.onResize(s.Size())
+	draw(s, &m)
+
+	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg != color.Blue {
+		t.Fatalf("dir row fg=%v want blue", fg)
+	}
+
+	if fg := s.styles[[2]int{0, 2}].GetForeground(); fg == color.Blue {
+		t.Fatal("file row should not be blue")
+	}
+
+	// The selected row stays plain reverse video, not blue, even on a dir.
+	m.cursor = 0
+	draw(s, &m)
+
+	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() {
+		t.Fatal("selected dir row should be reverse video")
+	}
+
+	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg == color.Blue {
+		t.Fatal("selected dir row should not carry a blue foreground")
 	}
 }
 
