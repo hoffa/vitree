@@ -617,7 +617,7 @@ var version = "dev"
 
 func run(args []string) error {
 	fs := flag.NewFlagSet("vitree", flag.ContinueOnError)
-	server := fs.String("server", "", "vim --servername to send files to (auto-detected if empty)")
+	server := fs.String("server", "", `vim --servername to send files to (default: the running server, or "vim")`)
 
 	vim := fs.String("vim", "vim", "vim binary to invoke (e.g. mvim, gvim, /path/to/vim)")
 	refresh := fs.Duration("refresh", defaultRefresh, "auto-refresh interval; 0 disables")

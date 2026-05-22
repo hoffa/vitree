@@ -29,6 +29,11 @@ func vimServers(vim string) ([]string, error) {
 	return servers, nil
 }
 
+// defaultServer is the --servername vitree falls back to when no vim server is
+// running. Opening a file with --remote-silent against a name nothing answers to
+// starts a fresh vim under that name, so vitree is useful before any vim exists.
+const defaultServer = "vim"
+
 func detectVimServer(vim string) (string, error) {
 	servers, err := vimServers(vim)
 	if err != nil {
@@ -37,7 +42,7 @@ func detectVimServer(vim string) (string, error) {
 
 	switch len(servers) {
 	case 0:
-		return "", errors.New("no vim server running - start vim with --servername first")
+		return defaultServer, nil
 	case 1:
 		return servers[0], nil
 	default:
