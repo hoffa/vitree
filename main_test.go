@@ -1012,12 +1012,12 @@ func TestDrawColorsDirs(t *testing.T) {
 	m.onResize(s.Size())
 	draw(s, &m)
 
-	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg != color.Blue {
-		t.Fatalf("dir row fg=%v want blue", fg)
+	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg != color.Navy {
+		t.Fatalf("dir row fg=%v want navy", fg)
 	}
 
-	if fg := s.styles[[2]int{0, 2}].GetForeground(); fg == color.Blue {
-		t.Fatal("file row should not be blue")
+	if fg := s.styles[[2]int{0, 2}].GetForeground(); fg == color.Navy {
+		t.Fatal("file row should not be navy")
 	}
 
 	// The selected row stays plain reverse video, not blue, even on a dir.
@@ -1028,8 +1028,8 @@ func TestDrawColorsDirs(t *testing.T) {
 		t.Fatal("selected dir row should be reverse video")
 	}
 
-	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg == color.Blue {
-		t.Fatal("selected dir row should not carry a blue foreground")
+	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg == color.Navy {
+		t.Fatal("selected dir row should not carry a navy foreground")
 	}
 }
 

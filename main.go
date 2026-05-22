@@ -502,7 +502,7 @@ func draw(s ui, m *model) {
 			st = st.Reverse(true)
 		} else {
 			if n.isDir {
-				st = st.Foreground(color.Blue)
+				st = st.Foreground(color.Navy)
 			}
 
 			if n.ignored {
