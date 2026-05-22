@@ -995,11 +995,11 @@ func TestDrawDimsIgnored(t *testing.T) {
 		t.Fatal("selected row should be reverse video")
 	}
 
-	// The selected row wins over dim even if it is itself ignored.
+	// The selected row keeps dim styling when it is itself ignored.
 	m.flat[0].ignored = true
 	draw(s, &m)
 
-	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() || st.HasDim() {
+	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() || !st.HasDim() {
 		t.Fatalf("selected ignored row: reverse=%v dim=%v", st.HasReverse(), st.HasDim())
 	}
 }
@@ -1020,7 +1020,7 @@ func TestDrawColorsDirs(t *testing.T) {
 		t.Fatal("file row should not be navy")
 	}
 
-	// The selected row stays plain reverse video, not blue, even on a dir.
+	// The selected row keeps its kind color under reverse video.
 	m.cursor = 0
 	draw(s, &m)
 
@@ -1028,8 +1028,8 @@ func TestDrawColorsDirs(t *testing.T) {
 		t.Fatal("selected dir row should be reverse video")
 	}
 
-	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg == color.Navy {
-		t.Fatal("selected dir row should not carry a navy foreground")
+	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg != color.Navy {
+		t.Fatalf("selected dir row fg=%v want navy", fg)
 	}
 }
 

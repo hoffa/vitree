@@ -491,23 +491,21 @@ func draw(s ui, m *model) {
 	y := 0
 
 	for i := start; i < end; i++ {
-		// Order matters: the selected row is always plain reverse video, even
-		// if it is itself a blue directory or gitignored — reverse wins over
-		// blue/dim so the cursor never looks washed out. Otherwise directories
-		// are blue, and an ignored entry is dimmed on top (a dimmed blue dir).
+		// Apply file kind first, then overlay the cursor with reverse video so
+		// selected rows still reveal whether they are dirs, ignored, or files.
 		n := m.flat[i]
 		st := tcell.StyleDefault
 
+		if n.isDir {
+			st = st.Foreground(color.Navy)
+		}
+
+		if n.ignored {
+			st = st.Dim(true)
+		}
+
 		if i == m.cursor {
 			st = st.Reverse(true)
-		} else {
-			if n.isDir {
-				st = st.Foreground(color.Navy)
-			}
-
-			if n.ignored {
-				st = st.Dim(true)
-			}
 		}
 
 		drawRow(s, y, m.rows[i], w, st)
