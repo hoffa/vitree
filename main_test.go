@@ -1020,7 +1020,8 @@ func TestDrawColorsDirs(t *testing.T) {
 		t.Fatal("file row should not be navy")
 	}
 
-	// The selected row keeps its kind color under reverse video.
+	// The selected dir row drops its kind color so it is a plain reverse of the
+	// default text and stays legible.
 	m.cursor = 0
 	draw(s, &m)
 
@@ -1028,12 +1029,8 @@ func TestDrawColorsDirs(t *testing.T) {
 		t.Fatal("selected dir row should be reverse video")
 	}
 
-	if bg := s.styles[[2]int{0, 0}].GetBackground(); bg != color.Navy {
-		t.Fatalf("selected dir row bg=%v want navy before reverse", bg)
-	}
-
 	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg == color.Navy {
-		t.Fatal("selected dir row foreground should not be navy before reverse")
+		t.Fatalf("selected dir row should drop navy, got fg=%v", fg)
 	}
 }
 

@@ -491,18 +491,15 @@ func draw(s ui, m *model) {
 	y := 0
 
 	for i := start; i < end; i++ {
-		// For selected rows, put semantic colors on the background before
-		// Reverse(true), so the reversed foreground matches the unselected color.
 		n := m.flat[i]
 		selected := i == m.cursor
 		st := tcell.StyleDefault
 
-		if n.isDir {
-			if selected {
-				st = st.Background(color.Navy)
-			} else {
-				st = st.Foreground(color.Navy)
-			}
+		// The selected row is always a plain reverse of the default text, so it
+		// stays legible; kind colors (navy dirs) would reverse into hard-to-read
+		// backgrounds, so they only apply to unselected rows.
+		if n.isDir && !selected {
+			st = st.Foreground(color.Navy)
 		}
 
 		if n.ignored {
