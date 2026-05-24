@@ -995,11 +995,12 @@ func TestDrawDimsIgnored(t *testing.T) {
 		t.Fatal("selected row should be reverse video")
 	}
 
-	// The selected row keeps dim styling when it is itself ignored.
+	// The selected row drops dim styling even when it is itself ignored, so it
+	// is always a plain reverse of the default text.
 	m.flat[0].ignored = true
 	draw(s, &m)
 
-	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() || !st.HasDim() {
+	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() || st.HasDim() {
 		t.Fatalf("selected ignored row: reverse=%v dim=%v", st.HasReverse(), st.HasDim())
 	}
 }

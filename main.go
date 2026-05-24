@@ -496,18 +496,18 @@ func draw(s ui, m *model) {
 		st := tcell.StyleDefault
 
 		// The selected row is always a plain reverse of the default text, so it
-		// stays legible; kind colors (navy dirs) would reverse into hard-to-read
-		// backgrounds, so they only apply to unselected rows.
-		if n.isDir && !selected {
-			st = st.Foreground(color.Navy)
-		}
-
-		if n.ignored {
-			st = st.Dim(true)
-		}
-
+		// stays legible and uniform; kind styling (navy dirs, dim ignored) would
+		// reverse into hard-to-read rows, so it only applies to unselected rows.
 		if selected {
 			st = st.Reverse(true)
+		} else {
+			if n.isDir {
+				st = st.Foreground(color.Navy)
+			}
+
+			if n.ignored {
+				st = st.Dim(true)
+			}
 		}
 
 		drawRow(s, y, m.rows[i], w, st)
