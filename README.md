@@ -47,9 +47,7 @@ In another terminal, run:
 vitree
 ```
 
-Moving the selection onto a file opens it in the Vim server; directories
-expand and collapse in place. `.gitignore`d files and `.git` are dimmed, not
-hidden.
+Navigate with keys or the mouse. `.gitignore`d files are dimmed.
 
 ### Keys
 
