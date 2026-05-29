@@ -16,7 +16,6 @@ type node struct {
 	isDir    bool
 	expanded bool
 	loaded   bool
-	ignored  bool
 	depth    int
 	children []*node
 }
@@ -86,15 +85,6 @@ func (n *node) load() error {
 	n.children = childrenFrom(n, entries)
 	n.loaded = true
 
-	// git can't re-include anything under an ignored directory, so an
-	// interactively-expanded ignored dir's children are ignored immediately —
-	// no need to wait for the next batched check-ignore.
-	if n.ignored {
-		for _, c := range n.children {
-			c.ignored = true
-		}
-	}
-
 	return nil
 }
 
@@ -155,14 +145,6 @@ func buildTree(rootPath string, expanded map[string]bool) (*node, error) {
 	}
 
 	expand(root)
-
-	var paths []string
-
-	root.walk(func(n *node) { paths = append(paths, n.path) })
-
-	ignored := gitIgnored(rootPath, paths)
-
-	root.walk(func(n *node) { n.ignored = ignored[n.path] })
 
 	return root, nil
 }

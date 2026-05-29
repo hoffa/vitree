@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3"
-	"github.com/gdamore/tcell/v3/color"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -491,23 +490,10 @@ func draw(s ui, m *model) {
 	y := 0
 
 	for i := start; i < end; i++ {
-		n := m.flat[i]
-		selected := i == m.cursor
 		st := tcell.StyleDefault
 
-		// The selected row is always a plain reverse of the default text, so it
-		// stays legible and uniform; kind styling (navy dirs, dim ignored) would
-		// reverse into hard-to-read rows, so it only applies to unselected rows.
-		if selected {
+		if i == m.cursor {
 			st = st.Reverse(true)
-		} else {
-			if n.isDir {
-				st = st.Foreground(color.Navy)
-			}
-
-			if n.ignored {
-				st = st.Dim(true)
-			}
 		}
 
 		drawRow(s, y, m.rows[i], w, st)
@@ -569,7 +555,7 @@ func loop(s ui, m model) {
 
 			// Snapshot what the rebuild needs here, on the UI goroutine — the
 			// tree is owned by this goroutine and must not be read off it. The
-			// slow part (buildTree: disk + git) then runs in a goroutine so it
+			// slow part (buildTree: disk) then runs in a goroutine so it
 			// never blocks scrolling; it reports back via refreshDoneEvent.
 			m.refreshing = true
 			rootPath := m.root.path

@@ -47,7 +47,7 @@ In another terminal, run:
 vitree
 ```
 
-Navigate with keys or the mouse. `.gitignore`d files are dimmed.
+Navigate with keys or the mouse.
 
 ### Keys
 

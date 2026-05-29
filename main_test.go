@@ -2,14 +2,12 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v3"
-	"github.com/gdamore/tcell/v3/color"
 )
 
 func mkTree(t *testing.T) string {
@@ -30,36 +28,6 @@ func mkTree(t *testing.T) string {
 		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-	}
-
-	return root
-}
-
-func mkGitignoredTree(t *testing.T) string {
-	t.Helper()
-
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	root := t.TempDir()
-	for _, p := range []string{"keep.txt", "ignored.log", "build/out.txt"} {
-		full := filepath.Join(root, p)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\nbuild/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if out, err := exec.CommandContext(t.Context(), "git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
 	}
 
 	return root
@@ -761,82 +729,6 @@ func TestBuildTreeTolerantOfSubdirError(t *testing.T) {
 	}
 }
 
-func TestGitIgnored(t *testing.T) {
-	root := mkGitignoredTree(t)
-
-	keep := filepath.Join(root, "keep.txt")
-	log := filepath.Join(root, "ignored.log")
-	build := filepath.Join(root, "build")
-
-	ig := gitIgnored(root, []string{keep, log, build})
-	if ig[keep] || !ig[log] || !ig[build] {
-		t.Fatalf("gitIgnored wrong: keep=%v log=%v build=%v", ig[keep], ig[log], ig[build])
-	}
-
-	// .git and its contents are reported by gitIgnored itself (check-ignore
-	// never reports them), even outside a repo.
-	gitDir := filepath.Join(root, ".git")
-	gitHead := filepath.Join(root, ".git", "HEAD")
-
-	ig = gitIgnored(t.TempDir(), []string{gitDir, gitHead, "/plain/x"})
-	if !ig[gitDir] || !ig[gitHead] || ig["/plain/x"] {
-		t.Fatalf("gitIgnored .git handling wrong: %v", ig)
-	}
-
-	// Empty input is a graceful no-op.
-	if len(gitIgnored(root, nil)) != 0 {
-		t.Fatal("empty paths should yield empty set")
-	}
-}
-
-func TestBuildTreeMarksIgnored(t *testing.T) {
-	root := mkGitignoredTree(t)
-
-	r, err := buildTree(root, map[string]bool{
-		root:                         true,
-		filepath.Join(root, "build"): true,
-		filepath.Join(root, ".git"):  true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got := map[string]bool{}
-
-	r.walk(func(n *node) { got[n.name] = n.ignored })
-
-	// keep.txt clean; *.log and build/ ignored; out.txt ignored via its
-	// ignored parent; .git and everything under it (e.g. HEAD) dimmed.
-	if got["keep.txt"] || !got["ignored.log"] || !got["build"] ||
-		!got["out.txt"] || !got[".git"] || !got["HEAD"] {
-		t.Fatalf("ignored flags wrong: %v", got)
-	}
-}
-
-func TestLoadInheritsIgnored(t *testing.T) {
-	root := mkTree(t) // no git needed: pure inheritance
-
-	n, err := newNode(filepath.Join(root, "a_dir"), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	n.ignored = true
-	if err := n.load(); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(n.children) == 0 {
-		t.Fatal("expected children")
-	}
-
-	for _, c := range n.children {
-		if !c.ignored {
-			t.Fatalf("child %q under an ignored dir must be ignored", c.name)
-		}
-	}
-}
-
 func TestNewModel(t *testing.T) {
 	dir := mkTree(t)
 	vim := writeFakeVim(t, `echo "EDIT"`)
@@ -974,64 +866,20 @@ func TestDraw(t *testing.T) {
 	}
 }
 
-func TestDrawDimsIgnored(t *testing.T) {
-	m := newTestModel(t) // a_dir, b_dir, a_file.md, z_file.txt
-	m.flat[1].ignored = true
+func TestDrawStyles(t *testing.T) {
+	m := newTestModel(t)
 	m.cursor = 0
 
 	s := newFakeScreen(30, 10)
 	m.onResize(s.Size())
-	draw(s, &m)
-
-	if !s.styles[[2]int{0, 1}].HasDim() {
-		t.Fatal("ignored row should be dim")
-	}
-
-	if s.styles[[2]int{0, 0}].HasDim() {
-		t.Fatal("non-ignored row should not be dim")
-	}
-
-	if !s.styles[[2]int{0, 0}].HasReverse() {
-		t.Fatal("selected row should be reverse video")
-	}
-
-	// The selected row drops dim styling even when it is itself ignored, so it
-	// is always a plain reverse of the default text.
-	m.flat[0].ignored = true
-	draw(s, &m)
-
-	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() || st.HasDim() {
-		t.Fatalf("selected ignored row: reverse=%v dim=%v", st.HasReverse(), st.HasDim())
-	}
-}
-
-func TestDrawColorsDirs(t *testing.T) {
-	m := newTestModel(t) // a_dir, b_dir (dirs), a_file.md, z_file.txt (files)
-	m.cursor = 2         // keep the cursor off the dirs we assert on
-
-	s := newFakeScreen(30, 10)
-	m.onResize(s.Size())
-	draw(s, &m)
-
-	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg != color.Navy {
-		t.Fatalf("dir row fg=%v want navy", fg)
-	}
-
-	if fg := s.styles[[2]int{0, 2}].GetForeground(); fg == color.Navy {
-		t.Fatal("file row should not be navy")
-	}
-
-	// The selected dir row drops its kind color so it is a plain reverse of the
-	// default text and stays legible.
-	m.cursor = 0
 	draw(s, &m)
 
 	if st := s.styles[[2]int{0, 0}]; !st.HasReverse() {
-		t.Fatal("selected dir row should be reverse video")
+		t.Fatal("selected row should be reverse video")
 	}
 
-	if fg := s.styles[[2]int{0, 0}].GetForeground(); fg == color.Navy {
-		t.Fatalf("selected dir row should drop navy, got fg=%v", fg)
+	if st := s.styles[[2]int{0, 1}]; st != tcell.StyleDefault {
+		t.Fatalf("unselected row should use the default style, got %v", st)
 	}
 }
 
