@@ -792,12 +792,35 @@ func TestRun(t *testing.T) {
 		t.Fatalf("default refresh = %v, want %v", got.refreshEvery, defaultRefresh)
 	}
 
-	if err := run([]string{"-vim", vim, "-server", "S", "-refresh", "0"}); err != nil {
-		t.Fatalf("run -refresh 0: %v", err)
+	wantDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if got.refreshEvery != 0 {
-		t.Fatalf("-refresh 0 should disable, got %v", got.refreshEvery)
+	if got.root.path != wantDir {
+		t.Fatalf("default path = %q, want %q", got.root.path, wantDir)
+	}
+
+	other := t.TempDir()
+	if err := run([]string{"-vim", vim, "-server", "S", "-refresh", "3s", other}); err != nil {
+		t.Fatalf("run with path and refresh: %v", err)
+	}
+
+	if got.refreshEvery != 3*time.Second {
+		t.Fatalf("-refresh 3s got %v", got.refreshEvery)
+	}
+
+	wantOther, err := filepath.EvalSymlinks(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.root.path != wantOther {
+		t.Fatalf("argument path = %q, want %q", got.root.path, wantOther)
+	}
+
+	if err := run([]string{"-vim", vim, "-server", "S", dir, other}); err == nil {
+		t.Fatal("expected error for too many directory arguments")
 	}
 
 	called = false

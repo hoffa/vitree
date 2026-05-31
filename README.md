@@ -44,7 +44,7 @@ vim --servername vim
 In another terminal, run:
 
 ```sh
-vitree
+vitree [dir]
 ```
 
 Navigate with keys or the mouse.
@@ -69,5 +69,5 @@ opens.
 | --- | --- | --- |
 | `-server` | auto-detected | Vim `--servername` to send files to |
 | `-vim` | `vim` | Vim binary to invoke (e.g. `mvim`, `gvim`) |
-| `-refresh` | `2s` | auto-refresh interval; `0` disables |
+| `-refresh` | `0` | auto-refresh interval; `0` disables |
 | `-version` | | print version and exit |

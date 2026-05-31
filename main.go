@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -30,8 +31,9 @@ type model struct {
 	rows         []string
 }
 
-// defaultRefresh is the auto-refresh interval used when -refresh is not given.
-const defaultRefresh = 2 * time.Second
+// defaultRefresh disables background refreshes. Press `r` to refresh manually,
+// or pass -refresh to opt in to polling.
+const defaultRefresh = 0
 
 func clamp(v, lo, hi int) int {
 	return max(lo, min(hi, v))
@@ -626,7 +628,17 @@ func run(args []string) error {
 		return err
 	}
 
-	m, err := newModel(*vim, *server, ".")
+	path := "."
+
+	if fs.NArg() > 1 {
+		return errors.New("usage: vitree [flags] [dir]")
+	}
+
+	if fs.NArg() == 1 {
+		path = fs.Arg(0)
+	}
+
+	m, err := newModel(*vim, *server, path)
 	if err != nil {
 		return err
 	}
