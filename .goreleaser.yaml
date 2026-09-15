@@ -10,12 +10,12 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/hoffa/vitree
-    description: A Vim file browser running in a separate terminal
-    url:
-      verified: github.com/hoffa/vitree
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/vitree"]
-          end
+    description: Vim file browser running in a separate terminal
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args:  ["-dr", "com.apple.quarantine", "{{ .ProjectName }}"],
+              chdir: "."
+        end
+      end
